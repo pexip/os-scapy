@@ -1,0 +1,16 @@
+#!/usr/bin/make -f
+
+#export DH_VERBOSE=1
+
+# include /usr/share/cdbs/1/rules/debhelper.mk
+# include /usr/share/cdbs/1/class/python-distutils.mk
+# include /usr/share/cdbs/1/rules/simple-patchsys.mk
+#
+# DEB_DH_INSTALL_SOURCEDIR := debian/tmp
+
+%:
+	dh $@ --with=python2 --with=quilt
+
+
+get-orig:
+	uscan --download-current-version --destdir ../tarballs

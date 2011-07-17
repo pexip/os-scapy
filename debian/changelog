@@ -1,0 +1,176 @@
+scapy (2.2.0-1) unstable; urgency=low
+
+  * New upstream release.
+  * Bug fix: "new upstream release 2.2 available", thanks to Michael
+    Prokop (Closes: #618732).
+  * Suggests python-pcapy, thanks to Jakub Wilk <jwilk@debian.org> (#589995).
+  * Bug fix: "import scapy.layers.dot11 fails on kfreebsd-*", thanks to
+    Christian Kastner (Closes: #589995). Patch by Jakub Wilk <jwilk@debian.org>
+  * cdbs/dh_pysupport to dh7/dh_python2 migration.
+
+ -- David Villa Alises <David.Villa@uclm.es>  Sun, 17 Jul 2011 13:08:38 +0200
+
+scapy (2.1.0-1) unstable; urgency=low
+
+  * New upstream release (Closes: #570343)
+
+ -- David Villa Alises <David.Villa@uclm.es>  Wed, 24 Feb 2010 12:43:23 +0100
+
+scapy (2.0.1-1) unstable; urgency=low
+
+  [ Sandro Tosi ]
+  * debian/control
+    - switch Vcs-Browser field to viewsvn
+  [ Yves-Alexis Perez ]
+  * new upstream release.
+  * debian/control:
+    - update standards version to 3.8.3.
+    - add ${misc:Depends} to depends since we use debhelper.
+  * debian/patches:
+    - both patches refreshed for new upstream.
+  [ David Villa ]
+  * new upstream release (Closes: #485767)
+
+ -- David Villa Alises <David.Villa@uclm.es>  Wed, 30 Sep 2009 17:27:46 +0200
+
+scapy (2.0.0.5-1) unstable; urgency=low
+
+  * New upstream release. Source taken from mercurial repository at
+    http://hg.secdev.org/scapy (tag 'v2.0.0.5')
+
+ -- David Villa Alises <David.Villa@uclm.es>  Sun, 17 Aug 2008 18:02:55 +0200
+
+scapy (1.1.1-4) UNRELEASED; urgency=low
+
+  [ Piotr Ożarowski ]
+  * Vcs-Svn, Vcs-Browser and Homepage fields added
+
+  [ Sandro Tosi ]
+  * debian/control
+    - uniforming Vcs-Browser field
+
+ -- Piotr Ożarowski <piotr@debian.org>  Sat,  6 Oct 2007 23:47:25 +0200
+
+scapy (1.1.1-3) unstable; urgency=low
+
+  * Upstream author made several important modificacions and bug
+    fixes, but he does not create a new upstream resease. I include
+    them as a patch in /debian/patches/scapy.py-upstream.patch
+
+ -- David Villa Alises <David.Villa@uclm.es>  Fri, 07 Sep 2007 15:50:27 +0200
+
+scapy (1.1.1-2) unstable; urgency=low
+
+  * debian/control
+    - XS-Python-Version: >= 2.4 (Closes: #426504)
+
+ -- David Villa Alises <David.Villa@uclm.es>  Tue, 29 May 2007 11:03:49 +0200
+
+scapy (1.1.1-1) unstable; urgency=low
+
+  * New upstream release
+  * debian/control
+    - Added Uploaders: Debian Python Modules Team <python-modules-team@lists.alioth.debian.org>
+    - build-depends-indep to build-depends: python-all-dev, python-support
+    - Changed Suggest: acroread to xpdf
+  * debian/python-scapy.install
+    - Changed to usr/lib/python2.*/site-packages/scapy.py (Closes: #421603)
+  * debian/copyright:
+    - Updated download location and author e-mail address
+  * Thanks to Scott Kitterman <scott@kitterman.com> for his patch
+
+ -- David Villa Alises <David.Villa@uclm.es>  Thu, 10 May 2007 09:53:49 +0200
+
+scapy (1.0.5.20-1) unstable; urgency=low
+
+  * New upstream release. (Closes: #407918)
+  * Include revision number in debian version. (Closes: #407920)
+  * Corrected copyright information. (Closes: #407916)
+  * Repacked upstream tarball with latest upstream revision, and
+    documented this in README.Debian.
+  * Added watch file.
+  * Bumped compat level to 5.
+  * debian/rules: Switch to CDBS.
+  * debian/control:
+    - Added Suggest: imagemagick and graphviz, for graph stuff. (Closes: #408130)
+    - Added Suggest: python-crypto, needed for decrypting WEP messages.
+    - Added Suggest: acroread, gv. (for psdump() and pdfdump())
+    - Added Suggest: sox (for VOIP stuff)
+    - Added Suggest: python-visual (for trace3D())
+  * Removed outdated file `scapy.html'.
+  * Thanks to Marcus Better <marcus@better.se> for his unrelesed version.
+
+ -- David Villa Alises <David.Villa@uclm.es>  Sun,  4 Feb 2007 16:56:03 +0100
+
+scapy (1.0.5-1) unstable; urgency=low
+
+  * New upstream release
+  * debian/rules: Updated to new python policy. Thanks to Francisco Moya
+    <francisco.moya@uclm.es> (Closes: #397958).
+  * debian/control:
+    - Binary package name changes according to Python Policy (Section 2.2)
+    - Added dummy transitional package to provide an upgrade path from scapy.
+
+ -- David Villa Alises <David.Villa@uclm.es>  Tue,  2 Jan 2007 16:26:35 +0100
+
+scapy (1.0.4-1) unstable; urgency=low
+
+  * New maintainer, with permission of previous maintainer
+  * New upstream release (Closes: #362655)
+  * Lets use scapy as library (Closes: #270267)
+  * debian/control
+    - Added Suggests: tcpdump
+
+ -- David Villa Alises <David.Villa@uclm.es>  Fri, 14 Apr 2006 22:35:29 +0200
+
+scapy (1.0.2-1) unstable; urgency=low
+
+  * New upstream release (Closes: #346271)
+  * debian/control:
+    - Changed Depends on python2.3 to python.
+    - Bumped Standards-Version to 3.6.1. No change.
+    - Added Suggests: python-gnuplot, python-pyx, ebtables
+
+ -- Alberto Gonzalez Iniesta <agi@inittab.org>  Sat,  7 Jan 2006 14:40:04 +0100
+
+scapy (1.0.0-1) unstable; urgency=low
+
+  * New upstream release (Closes: #322329)
+
+ -- Alberto Gonzalez Iniesta <agi@inittab.org>  Sun, 28 Aug 2005 15:06:00 +0200
+
+scapy (0.9.17-1) unstable; urgency=low
+
+  * New upstream release
+  * Modified scapy.py to point to the correct location of p0f.fp.
+    (Closes: #289397)
+  * Changed maintainer email address.
+
+ -- Alberto Gonzalez Iniesta <agi@inittab.org>  Mon, 17 Jan 2005 20:09:47 +0100
+
+scapy (0.9.15-2) unstable; urgency=low
+
+  * Added postrm to get rid of scapy.pyc on package removal.
+
+ -- Alberto Gonzalez Iniesta <agi@agi.as>  Thu, 16 Oct 2003 17:06:01 +0200
+
+scapy (0.9.15-1) unstable; urgency=low
+
+  * New upstream release
+  * Moved to debhelper compatability 4. Created debian/compat.
+  * Bumped Standards-Version to 3.6.1. No change.
+  * Changed Depends on python2.2 to python2.3
+
+ -- Alberto Gonzalez Iniesta <agi@agi.as>  Thu, 16 Oct 2003 16:52:39 +0200
+
+scapy (0.9.14-1) unstable; urgency=low
+
+  * New upstream version. (Closes: #198879)
+
+ -- Alberto Gonzalez Iniesta <agi@agi.as>  Thu, 26 Jun 2003 19:04:38 +0200
+
+scapy (0.9.12-1) unstable; urgency=low
+
+  * Initial Release. (Closes: #192169)
+
+ -- Alberto Gonzalez Iniesta <agi@agi.as>  Thu, 08 May 2003 15:11:36 +0200
