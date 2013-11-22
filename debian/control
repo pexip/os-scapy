@@ -1,8 +1,9 @@
 Source: scapy
 Section: python
 Priority: optional
-Maintainer: David Villa Alises <David.Villa@uclm.es>
-Uploaders: Francisco Moya <paco@debian.org>
+Maintainer: Pexip AS <packaging@pexip.com>
+XSBC-Original-Maintainer: David Villa Alises <David.Villa@uclm.es>
+XSBC-Original-Uploaders: Francisco Moya <paco@debian.org>
 Build-Depends: debhelper (>= 7), python (>=2.6.6-3~), quilt
 Standards-Version: 3.9.2
 Homepage: http://www.secdev.org/projects/scapy/

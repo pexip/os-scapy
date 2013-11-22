@@ -1,3 +1,10 @@
+scapy (2.2.0.1-1) unstable; urgency=low
+
+  * Snapshot release of https://github.com/pexip/python-scapy.git 
+    @ 4b2205772ee3483e87a3c64b24a1b4bb2cd15b0c
+
+ -- John-Mark Bell <jmb@pexip.com>  Fri, 22 Nov 2013 23:06:42 +0000
+
 scapy (2.2.0-1) unstable; urgency=low
 
   * New upstream release.
