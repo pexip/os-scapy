@@ -17,7 +17,7 @@ from scapy.config import conf
 from scapy.data import *
 from scapy.supersocket import SuperSocket
 import scapy.arch
-from scapy.error import warning
+from scapy.error import warning, Scapy_Exception
 
 
 
@@ -100,7 +100,10 @@ def get_working_if():
     for i in get_if_list():
         if i == LOOPBACK_NAME:                
             continue
-        ifflags = struct.unpack("16xH14x",get_if(i,SIOCGIFFLAGS))[0]
+        try:
+            ifflags = struct.unpack("16xH14x",get_if(i,SIOCGIFFLAGS))[0]
+        except IOError:
+            continue
         if ifflags & IFF_UP:
             return i
     return LOOPBACK_NAME
@@ -481,7 +484,7 @@ class L2ListenSocket(SuperSocket):
                 set_promisc(self.ins, i, 0)
         SuperSocket.close(self)
 
-    def recv(self, x):
+    def recv(self, x=MTU):
         pkt, sa_ll = self.ins.recvfrom(x)
         if sa_ll[3] in conf.l2types :
             cls = conf.l2types[sa_ll[3]]

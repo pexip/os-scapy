@@ -223,7 +223,7 @@ class Dot1Q(Packet):
     def default_payload_class(self, pay):
         if self.type <= 1500:
             return LLC
-        return Raw
+        return conf.raw_layer
     def extract_padding(self,s):
         if self.type <= 1500:
             return s[:self.type],s[self.type:]
@@ -405,7 +405,7 @@ bind_layers( GRE,           Ether,         proto=1)
 bind_layers( GRE,           ARP,           proto=2054)
 bind_layers( GRE,           EAPOL,         proto=34958)
 bind_layers( GRE,           GRErouting,    { "routing_present" : 1 } )
-bind_layers( GRErouting,    Raw,           { "address_family" : 0, "SRE_len" : 0 })
+bind_layers( GRErouting,    conf.raw_layer,{ "address_family" : 0, "SRE_len" : 0 })
 bind_layers( GRErouting,    GRErouting,    { } )
 bind_layers( EAPOL,         EAP,           type=0)
 bind_layers( LLC,           STP,           dsap=66, ssap=66, ctrl=3)
@@ -534,7 +534,8 @@ class ARP_am(AnsweringMachine):
 @conf.commands.register
 def etherleak(target, **kargs):
     """Exploit Etherleak flaw"""
-    return srpflood(Ether()/ARP(pdst=target), prn=lambda (s,r): Padding in r and hexstr(r[Padding].load),
+    return srpflood(Ether()/ARP(pdst=target), 
+                    prn=lambda (s,r): conf.padding_layer in r and hexstr(r[conf.padding_layer].load),
                     filter="arp", **kargs)
 
 
