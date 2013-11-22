@@ -10,7 +10,7 @@ SuperSocket.
 import socket,time
 from config import conf
 from data import *
-from scapy.error import warning
+from scapy.error import warning, log_runtime
 
 class _SuperSocket_metaclass(type):
     def __repr__(self):
@@ -30,7 +30,8 @@ class SuperSocket:
         self.promisc=None
     def send(self, x):
         sx = str(x)
-        x.sent_time = time.time()
+        if hasattr(x, "sent_time"):
+            x.sent_time = time.time()
         return self.outs.send(sx)
     def recv(self, x=MTU):
         return conf.raw_layer(self.ins.recv(x))
@@ -123,7 +124,7 @@ class StreamSocket(SimpleSocket):
         if x == 0:
             raise socket.error((100,"Underlying stream socket tore down"))
         pkt = self.basecls(pkt)
-        pad = pkt.getlayer(Padding)
+        pad = pkt.getlayer(conf.padding_layer)
         if pad is not None and pad.underlayer is not None:
             del(pad.underlayer.payload)
         while pad is not None and not isinstance(pad, NoPayload):
