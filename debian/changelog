@@ -1,3 +1,9 @@
+scapy (2.2.0.1-2) pexip; urgency=low
+
+  * No-change rebuild; bump version
+
+ -- John-Mark Bell <jmb@pexip.com>  Mon, 04 Apr 2016 02:09:12 +0100
+
 scapy (2.2.0.1-1) unstable; urgency=low
 
   * Snapshot release of https://github.com/pexip/python-scapy.git 
