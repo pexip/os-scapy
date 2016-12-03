@@ -1,23 +1,40 @@
 Source: scapy
+Maintainer: Internet Measurement Packaging Team <pkg-netmeasure-discuss@lists.alioth.debian.org>
+Uploaders: Iain R. Learmonth <irl@debian.org>
 Section: python
 Priority: optional
-Maintainer: David Villa Alises <David.Villa@uclm.es>
-Uploaders: Francisco Moya <paco@debian.org>
-Build-Depends: debhelper (>= 7), python (>=2.6.6-3~), quilt
-Standards-Version: 3.9.2
+Build-Depends: debhelper (>= 9),
+               dh-python,
+               python,
+               quilt
+Standards-Version: 3.9.8
+Vcs-Browser: https://anonscm.debian.org/cgit/pkg-netmeasure/scapy.git
+Vcs-Git: https://anonscm.debian.org/git/pkg-netmeasure/scapy.git
 Homepage: http://www.secdev.org/projects/scapy/
-Vcs-Svn: svn://svn.debian.org/python-modules/packages/scapy/trunk/
-Vcs-Browser: http://svn.debian.org/viewsvn/python-modules/packages/scapy/trunk/
 
 Package: python-scapy
 Architecture: all
-Depends: ${python:Depends}, ${misc:Depends}
-Suggests: tcpdump, tcpreplay, wireshark, graphviz, imagemagick, python-gnuplot,
- python-crypto, python-pyx, ebtables, python-visual, sox, xpdf, gv, hexer,
- librsvg2-bin, python-pcapy
-Replaces: scapy (<< 1.0.5-1)
-Conflicts: scapy (<< 1.0.5-1)
+Depends: ${python:Depends},
+         ${misc:Depends}
+Suggests: tcpdump,
+          tcpreplay,
+          wireshark,
+          graphviz,
+          imagemagick,
+          python-gnuplot,
+          python-crypto,
+          python-pyx,
+          ebtables,
+          python-visual,
+          sox,
+          xpdf,
+          gv,
+          hexer,
+          librsvg2-bin,
+          python-pcapy
 Provides: scapy
+Breaks: scapy (<< 1.0.5-1)
+Replaces: scapy (<< 1.0.5-1)
 Description: Packet generator/sniffer and network scanner/discovery
  Scapy is a powerful interactive packet manipulation tool, packet
  generator, network scanner, network discovery, packet sniffer, etc. It

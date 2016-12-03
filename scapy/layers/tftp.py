@@ -11,7 +11,7 @@ import os,random
 from scapy.packet import *
 from scapy.fields import *
 from scapy.automaton import *
-from scapy.layers.inet import UDP
+from scapy.layers.inet import UDP, IP
 
 
 
@@ -183,8 +183,8 @@ class TFTP_read(Automaton):
     # RECEIVED
     @ATMT.state()
     def RECEIVING(self, pkt):
-        if Raw in pkt:
-            recvd = pkt[Raw].load
+        if conf.raw_layer in pkt:
+            recvd = pkt[conf.raw_layer].load
         else:
             recvd = ""
         self.res += recvd
@@ -227,8 +227,8 @@ class TFTP_write(Automaton):
     # BEGIN
     @ATMT.state(initial=1)
     def BEGIN(self):
-        self.data = [ self.origdata[i*self.blocksize:(i+1)*self.blocksize]
-                      for i in range( len(self.origdata)/self.blocksize+1) ] 
+        self.data = [self.origdata[i*self.blocksize:(i+1)*self.blocksize]
+                     for i in xrange( len(self.origdata)/self.blocksize+1)]
         self.my_tid = self.sport or RandShort()._fix()
         bind_bottom_up(UDP, TFTP, dport=self.my_tid)
         self.server_tid = None

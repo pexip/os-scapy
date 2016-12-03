@@ -17,9 +17,11 @@ Routing and network interface handling for IPv6.
 #############################################################################
 
 import socket
-from config import conf
-from utils6 import *
-from arch import *
+from scapy.config import conf
+from scapy.utils6 import *
+from scapy.arch import *
+from scapy.pton_ntop import *
+from scapy.error import warning, log_loading
 
 
 class Route6:
@@ -121,8 +123,8 @@ class Route6:
         nmask = in6_cidr2mask(the_plen)
         the_net = inet_ntop(socket.AF_INET6, in6_and(nmask,naddr))
         
-        for i in range(len(self.routes)):
-            net,plen,gw,iface,addr = self.routes[i]
+        for i, route in enumerate(self.routes):
+            net,plen,gw,iface,addr = route
             if iface != iff:
                 continue
             if gw == '::':
@@ -232,6 +234,10 @@ class Route6:
             srcaddr = get_source_addr_from_candidate_set(dst, p[1][1])
             if srcaddr is not None:
                 res.append((p[0], (tmp[0], srcaddr, tmp[2])))
+
+        if res == []:
+            warning("Found a route for IPv6 destination '%s', but no possible source address." % dst)
+            return (LOOPBACK_NAME, "::", "::") # XXX Linux specific
 
         # Symptom  : 2 routes with same weight (our weight is plen)
         # Solution : 

@@ -11,6 +11,9 @@
 %:
 	dh $@ --with=python2 --with=quilt
 
+override_dh_auto_clean:
+	dh_auto_clean
+	-rm scapy/VERSION
 
 get-orig:
 	uscan --download-current-version --destdir ../tarballs

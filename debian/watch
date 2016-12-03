@@ -1,2 +1,2 @@
 version=3
-http://www.secdev.org/projects/scapy/files/scapy-([\d\.]+)\.tar\.gz
+https://github.com/secdev/scapy/releases .*/archive/v(\d[\d.-]+)\.(?:tar(?:\.gz|\.bz2)?|tgz)

@@ -14,7 +14,6 @@ import os
 
 from fcntl import fcntl
 from scapy.sendrecv import sniff
-from scapy.packet import Raw
 from scapy.layers.inet import IP,UDP
 from scapy.layers.rtp import RTP
 from scapy.utils import get_temp_file
@@ -27,7 +26,7 @@ def merge(x,y,sample_size=2):
         x += "\x00"*(len(y)-len(x))
     m = ""
     ss=sample_size
-    for i in range(len(x)/ss):
+    for i in xrange(len(x)/ss):
         m += x[ss*i:ss*(i+1)]+y[ss*i:ss*(i+1)]
     return  m
 #    return  "".join(map(str.__add__, x, y))
@@ -49,7 +48,9 @@ def voip_play(s1,list=None,**kargs):
         fcntl.fcntl(c2.fileno(),fcntl.F_SETFL, os.O_NONBLOCK)
     
     #    dsp,rd = os.popen2("sox -t .ul -c 2 - -t ossdsp /dev/dsp")
-        def play(pkt,last=[]):
+        def play(pkt, last=None):
+            if last is None:
+                last = []
             if not pkt:
                 return 
             if not pkt.haslayer(UDP):
@@ -93,7 +94,8 @@ def voip_play1(s1,list=None,**kargs):
             return 
         ip=pkt.getlayer(IP)
         if s1 in [ip.src, ip.dst]:
-            dsp.write(pkt.getlayer(Raw).load[12:])
+            from scapy.config import conf
+            dsp.write(pkt.getlayer(conf.raw_layer).load[12:])
     try:
         if list is None:
             sniff(store=0, prn=play, **kargs)
@@ -106,7 +108,9 @@ def voip_play1(s1,list=None,**kargs):
 
 def voip_play2(s1,**kargs):
     dsp,rd = os.popen2("sox -t .ul -c 2 - -t ossdsp /dev/dsp")
-    def play(pkt,last=[]):
+    def play(pkt, last=None):
+        if last is None:
+            last = []
         if not pkt:
             return 
         if not pkt.haslayer(UDP):
@@ -134,7 +138,8 @@ def voip_play3(lst=None,**kargs):
     dsp,rd = os.popen2("sox -t .ul - -t ossdsp /dev/dsp")
     try:
         def play(pkt, dsp=dsp):
-            if pkt and pkt.haslayer(UDP) and pkt.haslayer(Raw):
+            from scapy.config import conf
+            if pkt and pkt.haslayer(UDP) and pkt.haslayer(conf.raw_layer):
                 dsp.write(pkt.getlayer(RTP).load)
         if lst is None:
             sniff(store=0, prn=play, **kargs)

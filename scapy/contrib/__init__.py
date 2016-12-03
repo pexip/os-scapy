@@ -4,9 +4,5 @@
 ## This program is published under a GPLv2 license
 
 """
-Support for BSD-like operating systems such as FreeBSD, OpenBSD and Mac OS X.
+Package of contrib modules that have to be loaded explicitly.
 """
-
-LOOPBACK_NAME="lo0"
-
-from unix import *

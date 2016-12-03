@@ -1,17 +1,6 @@
---- a/scapy/arch/linux.py
-+++ b/scapy/arch/linux.py
-@@ -69,7 +69,7 @@
- 
- LOOPBACK_NAME="lo"
- 
--with os.popen("tcpdump -V 2> /dev/null") as _f:
-+with os.popen("/usr/sbin/tcpdump -V 2> /dev/null") as _f:
-     if _f.close() >> 8 == 0x7f:
-         log_loading.warning("Failed to execute tcpdump. Check it is installed and in the PATH")
-         TCPDUMP=0
 --- a/scapy/config.py
 +++ b/scapy/config.py
-@@ -56,11 +56,11 @@
+@@ -57,11 +57,11 @@
  
      
  class ProgPath(ConfClass):
@@ -25,3 +14,25 @@
      tcpreplay = "tcpreplay"
      hexedit = "hexer"
      wireshark = "wireshark"
+--- a/scapy/data.py
++++ b/scapy/data.py
+@@ -182,7 +182,7 @@
+     IP_PROTOS=load_protocols("/etc/protocols")
+     ETHER_TYPES=load_ethertypes("/etc/ethertypes")
+     TCP_SERVICES,UDP_SERVICES=load_services("/etc/services")
+-    MANUFDB = load_manuf("/usr/share/wireshark/wireshark/manuf")
++    MANUFDB = load_manuf("/usr/share/wireshark/manuf")
+ 
+ 
+ 
+--- a/scapy/utils6.py
++++ b/scapy/utils6.py
+@@ -274,7 +274,7 @@
+     Extract the MAC address from a modified EUI-64 constructed IPv6
+     address provided and use the IANA oui.txt file to get the vendor.
+     The database used for the conversion is the one loaded by Scapy,
+-    based on Wireshark (/usr/share/wireshark/wireshark/manuf)  None
++    based on Wireshark (/usr/share/wireshark/manuf)  None
+     is returned on error, "UNKNOWN" if the vendor is unknown.
+     """
+     mac = in6_addrtomac(addr)

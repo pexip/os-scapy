@@ -8,9 +8,10 @@ SuperSocket.
 """
 
 import socket,time
-from config import conf
-from data import *
-from scapy.error import warning
+
+from scapy.config import conf
+from scapy.data import *
+from scapy.error import warning, log_runtime
 
 class _SuperSocket_metaclass(type):
     def __repr__(self):
@@ -30,7 +31,8 @@ class SuperSocket:
         self.promisc=None
     def send(self, x):
         sx = str(x)
-        x.sent_time = time.time()
+        if hasattr(x, "sent_time"):
+            x.sent_time = time.time()
         return self.outs.send(sx)
     def recv(self, x=MTU):
         return conf.raw_layer(self.ins.recv(x))
@@ -46,14 +48,17 @@ class SuperSocket:
         if self.ins and self.ins.fileno() != -1:
             self.ins.close()
     def sr(self, *args, **kargs):
+        from scapy import sendrecv
         return sendrecv.sndrcv(self, *args, **kargs)
     def sr1(self, *args, **kargs):        
+        from scapy import sendrecv
         a,b = sendrecv.sndrcv(self, *args, **kargs)
         if len(a) > 0:
             return a[0][1]
         else:
             return None
     def sniff(self, *args, **kargs):
+        from scapy import sendrecv
         return sendrecv.sniff(opened_socket=self, *args, **kargs)
 
 class L3RawSocket(SuperSocket):
@@ -91,7 +96,7 @@ class L3RawSocket(SuperSocket):
             pkt = pkt.payload
             
         if pkt is not None:
-            from arch import get_last_packet_timestamp
+            from scapy.arch import get_last_packet_timestamp
             pkt.time = get_last_packet_timestamp(self.ins)
         return pkt
     def send(self, x):
@@ -123,9 +128,10 @@ class StreamSocket(SimpleSocket):
         if x == 0:
             raise socket.error((100,"Underlying stream socket tore down"))
         pkt = self.basecls(pkt)
-        pad = pkt.getlayer(Padding)
+        pad = pkt.getlayer(conf.padding_layer)
         if pad is not None and pad.underlayer is not None:
             del(pad.underlayer.payload)
+        from scapy.packet import NoPayload
         while pad is not None and not isinstance(pad, NoPayload):
             x -= len(pad.load)
             pad = pad.payload
@@ -136,5 +142,3 @@ class StreamSocket(SimpleSocket):
 
 if conf.L3socket is None:
     conf.L3socket = L3RawSocket
-
-import sendrecv
