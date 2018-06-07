@@ -1,3 +1,49 @@
+scapy (2.4.0-2) unstable; urgency=medium
+
+  * Use pybuild for Python 2 and 3 packages (Closes: #889938, #889939)
+  * Removes get-orig target from rules
+
+ -- Iain R. Learmonth <irl@debian.org>  Thu, 07 Jun 2018 22:09:24 +0100
+
+scapy (2.4.0-1) unstable; urgency=medium
+
+  [ Ana Custura ]
+  * Adds python-geoip to sugested packages as it is used to perform geotraces
+
+  [ Iain R. Learmonth ]
+  * New upstream version 2.4.0
+  * debian/control:
+   - Use debhelper 11
+   - Update standards version to 4.1.4
+   - Remove explicit Build-Depends on quilt (no longer required)
+   - Update Vcs-* fields to point to salsa repository from deprecated
+     Alioth repository
+   - Updates homepage to GitHub location
+  * debian/patches:
+   - Refresh paths.patch:
+     The only path now overridden is for tcpdump, which is found in /usr/sbin
+     and so is not in the typical user's path.
+   - Removes fix-version.patch:
+     This functionality is now incorporated upstream.
+
+  The work for this change was supported by the European Union under grant
+  agreement No. 688421. This support does not imply endorsement.
+
+ -- Iain R. Learmonth <irl@debian.org>  Mon, 07 May 2018 12:37:37 +0100
+
+scapy (2.3.3-3) unstable; urgency=medium
+
+  * Do not output trailing newline generating version number
+
+ -- Iain R. Learmonth <irl@debian.org>  Sat, 16 Sep 2017 06:28:53 +0100
+
+scapy (2.3.3-2) unstable; urgency=medium
+
+  [ Hilko Bengen ]
+  * fix unreliable generation of scapy.VERSION at build time
+
+ -- Iain R. Learmonth <irl@debian.org>  Sat, 16 Sep 2017 06:19:55 +0100
+
 scapy (2.3.3-1) unstable; urgency=medium
 
   * New upstream version 2.3.3

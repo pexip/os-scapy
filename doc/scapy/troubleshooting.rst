@@ -14,7 +14,7 @@ I can't ping 127.0.0.1. Scapy does not work with 127.0.0.1 or on the loopback in
 
 The loopback interface is a very special interface. Packets going through it are not really assembled and disassembled. The kernel routes the packet to its destination while it is still stored an internal structure. What you see with tcpdump -i lo is only a fake to make you think everything is normal. The kernel is not aware of what Scapy is doing behind his back, so what you see on the loopback interface is also a fake. Except this one did not come from a local structure. Thus the kernel will never receive it.
 
-In order to speak to local applications, you need to build your packets one layer upper, using a PF_INET/SOCK_RAW socket instead of a PF_PACKET/SOCK_RAW (or its equivalent on other systems that Linux)::
+In order to speak to local applications, you need to build your packets one layer upper, using a PF_INET/SOCK_RAW socket instead of a PF_PACKET/SOCK_RAW (or its equivalent on other systems than Linux)::
 
     >>> conf.L3socket
     <class __main__.L3PacketSocket at 0xb7bdf5fc>
@@ -62,8 +62,12 @@ Getting help
 
 Common problems are answered in the FAQ.
 
-There's a low traffic mailing list at ``scapy.ml(at)secdev.org``  (`archive <http://news.gmane.org/gmane.comp.security.scapy.general>`_, `RSS, NNTP <http://gmane.org/info.php?group=gmane.comp.security.scapy.general>`_). You are encouraged to send questions, bug reports, suggestions, ideas, cool usages of Scapy, etc. to this list. Subscribe by sending a mail to ``scapy.ml-subscribe(at)secdev.org``.
+If you need additional help, please check out:
 
+* The `Gitter channel <https://gitter.im/secdev/scapy>`_
+* The `GitHub repository <https://github.com/secdev/scapy/>`_
 
+There's also a low traffic mailing list at ``scapy.ml(at)secdev.org``  (`archive <http://news.gmane.org/gmane.comp.security.scapy.general>`_, `RSS, NNTP <http://gmane.org/info.php?group=gmane.comp.security.scapy.general>`_).
+Subscribe by sending a mail to ``scapy.ml-subscribe(at)secdev.org``.
 
-To avoid spam, you must subscribe to the mailing list to post.
+You are encouraged to send questions, bug reports, suggestions, ideas, cool usages of Scapy, etc.

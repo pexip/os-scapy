@@ -7,6 +7,7 @@
 SNMP (Simple Network Management Protocol).
 """
 
+from __future__ import print_function
 from scapy.packet import *
 from scapy.asn1packet import *
 from scapy.asn1fields import *
@@ -130,7 +131,7 @@ SNMP_error = { 0: "no_error",
               10: "wrong_value",
               11: "no_creation",
               12: "inconsistent_value",
-              13: "ressource_unavailable",
+              13: "resource_unavailable",
               14: "commit_failed",
               15: "undo_failed",
               16: "authorization_error",
@@ -237,22 +238,23 @@ class SNMP(ASN1_Packet):
                    isinstance(other.PDU, SNMPset)    ) and
                  self.PDU.id == other.PDU.id )
 
-bind_layers( UDP,           SNMP,          sport=161)
-bind_layers( UDP,           SNMP,          dport=161)
-bind_layers( UDP,           SNMP,          sport=162) 
-bind_layers( UDP,           SNMP,          dport=162) 
+bind_bottom_up(UDP, SNMP, sport=161)
+bind_bottom_up(UDP, SNMP, dport=161)
+bind_bottom_up(UDP, SNMP, sport=162)
+bind_bottom_up(UDP, SNMP, dport=162)
+bind_layers(UDP, SNMP, sport=161, dport=161)
 
 def snmpwalk(dst, oid="1", community="public"):
     try:
-        while 1:
+        while True:
             r = sr1(IP(dst=dst)/UDP(sport=RandShort())/SNMP(community=community, PDU=SNMPnext(varbindlist=[SNMPvarbind(oid=oid)])),timeout=2, chainCC=1, verbose=0, retry=2)
-            if ICMP in r:
-                print repr(r)
-                break
             if r is None:
-                print "No answers"
+                print("No answers")
                 break
-            print "%-40s: %r" % (r[SNMPvarbind].oid.val,r[SNMPvarbind].value)
+            if ICMP in r:
+                print(repr(r))
+                break
+            print("%-40s: %r" % (r[SNMPvarbind].oid.val,r[SNMPvarbind].value))
             oid = r[SNMPvarbind].oid
             
     except KeyboardInterrupt:

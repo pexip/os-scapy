@@ -1,14 +1,29 @@
-#! /usr/bin/env python
-# scapy.contrib.description = nsh
+# This file is part of Scapy
+# Scapy is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# any later version.
+#
+# Scapy is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Scapy. If not, see <http://www.gnu.org/licenses/>.
+
+# scapy.contrib.description = NSH Protocol
 # scapy.contrib.status = loads
+
 from scapy.all import bind_layers
 from scapy.fields import BitField, ByteField, ByteEnumField
 from scapy.fields import ShortField, X3BytesField, XIntField
-from scapy.fields import ConditionalField, PacketListField
+from scapy.fields import ConditionalField, PacketListField, BitFieldLenField
 from scapy.layers.inet import Ether, IP
 from scapy.layers.inet6 import IPv6
 from scapy.layers.vxlan import VXLAN
 from scapy.packet import Packet
+from scapy.layers.l2 import GRE
 
 from scapy.contrib.mpls import MPLS
 
@@ -46,7 +61,9 @@ class NSH(Packet):
         BitField('OAM', 0, 1),
         BitField('Critical', 0, 1),
         BitField('Reserved', 0, 6),
-        BitField('Len', 0, 6),
+        BitFieldLenField('Len', None, 6,
+                         count_of='ContextHeaders',
+                         adjust=lambda pkt, x: 6 if pkt.MDType == 1 else x + 2),
         ByteEnumField('MDType', 1, {1: 'Fixed Length',
                                     2: 'Variable Length'}),
         ByteEnumField('NextProto', 3, {1: 'IPv4',
@@ -71,6 +88,7 @@ class NSH(Packet):
 
 bind_layers(Ether, NSH, {'type': 0x894F}, type=0x894F)
 bind_layers(VXLAN, NSH, {'flags': 0xC, 'NextProtocol': 4}, NextProtocol=4)
+bind_layers(GRE, NSH, {'proto': 0x894F}, proto=0x894F)
 
 bind_layers(NSH, IP, {'NextProto': 1}, NextProto=1)
 bind_layers(NSH, IPv6, {'NextProto': 2}, NextProto=2)

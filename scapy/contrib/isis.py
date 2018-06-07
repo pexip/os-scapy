@@ -1,3 +1,17 @@
+# This file is part of Scapy
+# Scapy is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# any later version.
+#
+# Scapy is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Scapy. If not, see <http://www.gnu.org/licenses/>.
+
 # scapy.contrib.description = ISIS
 # scapy.contrib.status = loads
 
@@ -5,8 +19,9 @@
     IS-IS Scapy Extension
     ~~~~~~~~~~~~~~~~~~~~~
 
-    :copyright: 2014, 2015 BENOCS GmbH, Berlin (Germany)
+    :copyright: 2014-2016 BENOCS GmbH, Berlin (Germany)
     :author:    Marcel Patzlaff, mpatzlaff@benocs.com
+                Michal Kaliszan, mkaliszan@benocs.com
     :license:   GPLv2
 
         This module is free software; you can redistribute it and/or
@@ -29,7 +44,7 @@
          * RFC 1195 (only the TCP/IP related part)
          * RFC 3358 (optional checksums)
          * RFC 5301 (dynamic hostname extension)
-         * RFC 5302 (domain-wide prefix destribution)
+         * RFC 5302 (domain-wide prefix distribution)
          * RFC 5303 (three-way handshake)
          * RFC 5304 (cryptographic authentication)
          * RFC 5308 (routing IPv6 with IS-IS)
@@ -45,6 +60,7 @@
 
 """
 
+from __future__ import absolute_import
 import struct
 import random
 
@@ -52,10 +68,14 @@ from scapy.config import conf
 from scapy.fields import *
 from scapy.packet import *
 from scapy.layers.clns import network_layer_protocol_ids, register_cln_protocol
-from scapy.layers.inet6 import IP6ListField
+from scapy.layers.inet6 import IP6ListField, IP6Field
+from scapy.utils import fletcher16_checkbytes
+from scapy.volatile import RandString, RandByte
+import random
+from scapy.modules.six.moves import range
+from scapy.compat import raw
 
-
-EXT_VERSION = "v0.0.1"
+EXT_VERSION = "v0.0.2"
 
 conf.debug_dissector = True
 
@@ -64,7 +84,7 @@ conf.debug_dissector = True
 ##  ISIS Utilities + Fields                                          ##
 #######################################################################
 def isis_area2str(area):
-    return "".join(x.decode("hex") for x in area.split("."))
+    return b"".join(hex_bytes(x) for x in area.split("."))
 
 
 def isis_str2area(s):
@@ -72,32 +92,32 @@ def isis_str2area(s):
         return ""
 
     numbytes = len(s[1:])
-    fmt = "%02X" + (".%02X%02X" * (numbytes / 2)) + ("" if (numbytes % 2) == 0 else ".%02X")
-    return fmt % tuple(map(ord, s))
+    fmt = "%02X" + (".%02X%02X" * (numbytes // 2)) + ("" if (numbytes % 2) == 0 else ".%02X")
+    return fmt % tuple(orb(x) for x in s)
 
 
 def isis_sysid2str(sysid):
-    return "".join(x.decode("hex") for x in sysid.split("."))
+    return b"".join(hex_bytes(x) for x in sysid.split("."))
 
 
 def isis_str2sysid(s):
-    return ("%02X%02X."*3)[:-1] % tuple(map(ord, s))
+    return ("%02X%02X."*3)[:-1] % tuple(orb(x) for x in s)
 
 
 def isis_nodeid2str(nodeid):
-    return "%s%s" % (isis_sysid2str(nodeid[:-3]), nodeid[-2:].decode("hex"))
+    return isis_sysid2str(nodeid[:-3]) + hex_bytes(nodeid[-2:])
 
 
 def isis_str2nodeid(s):
-    return "%s.%02X" % (isis_str2sysid(s[:-1]), ord(s[-1]))
+    return "%s.%02X" % (isis_str2sysid(s[:-1]), orb(s[-1]))
 
 
 def isis_lspid2str(lspid):
-    return "%s%s" % (isis_nodeid2str(lspid[:-3]), lspid[-2:].decode("hex"))
+    return isis_nodeid2str(lspid[:-3]) + hex_bytes(lspid[-2:])
 
 
 def isis_str2lspid(s):
-    return "%s-%02X" % (isis_str2nodeid(s[:-1]), ord(s[-1]))
+    return "%s-%02X" % (isis_str2nodeid(s[:-1]), orb(s[-1]))
 
 
 class _ISIS_IdFieldBase(Field):
@@ -110,7 +130,7 @@ class _ISIS_IdFieldBase(Field):
 
     def i2m(self, pkt, x):
         if x is None:
-            return "\0"*self.length
+            return b"\0"*self.length
 
         return self.to_str(x)
 
@@ -118,7 +138,7 @@ class _ISIS_IdFieldBase(Field):
         return self.to_id(x)
 
     def any2i(self, pkt, x):
-        if type(x) is str and len(x) == self.length:
+        if isinstance(x, str) and len(x) == self.length:
             return self.m2i(pkt, x)
 
         return x
@@ -135,7 +155,7 @@ class _ISIS_RandId(RandString):
 
         val = ()
 
-        for _ in xrange(self.bytecount):
+        for _ in range(self.bytecount):
             val += (RandByte(),)
 
         return self.format % val
@@ -144,7 +164,7 @@ class _ISIS_RandId(RandString):
 class _ISIS_RandAreaId(_ISIS_RandId):
     def __init__(self, bytecount= None):
         self.bytecount = random.randint(1, 13) if bytecount is None else bytecount
-        self.format = "%02X" + (".%02X%02X" * ((self.bytecount-1) / 2)) + ("" if ((self.bytecount-1) % 2) == 0 else ".%02X")
+        self.format = "%02X" + (".%02X%02X" * ((self.bytecount-1) // 2)) + ("" if ((self.bytecount-1) % 2) == 0 else ".%02X")
 
 
 class ISIS_AreaIdField(Field):
@@ -165,7 +185,7 @@ class ISIS_AreaIdField(Field):
             return 0
         l = len(x)
         # l/5 is the number of dots in the Area ID
-        return (l - (l / 5)) / 2
+        return (l - (l // 5)) // 2
 
     def addfield(self, pkt, s, val):
         sval = self.i2m(pkt, val)
@@ -206,9 +226,168 @@ class ISIS_LspIdField(_ISIS_IdFieldBase):
 class ISIS_CircuitTypeField(FlagsField):
     def __init__(self, name="circuittype", default=2, size=8,
                  names=None):
-        FlagsField.__init__(self, name, default, size, names)
         if names is None:
             names = ["L1", "L2", "r0", "r1", "r2", "r3", "r4", "r5"]
+        FlagsField.__init__(self, name, default, size, names)
+
+
+def _ISIS_GuessTlvClass_Helper(tlv_classes, defaultname, p, **kargs):
+    cls = conf.raw_layer
+    if len(p) >= 2:
+        tlvtype = orb(p[0])
+        clsname = tlv_classes.get(tlvtype, defaultname)
+        cls = globals()[clsname]
+
+    return cls(p, **kargs)
+
+
+class _ISIS_GenericTlv_Base(Packet):
+    fields_desc = [ByteField("type", 0),
+                   FieldLenField("len", None, length_of="val", fmt="B"),
+                   BoundStrLenField("val", "", length_from=lambda pkt: pkt.len)]
+
+    def guess_payload_class(self, p):
+        return conf.padding_layer
+
+
+class ISIS_GenericTlv(_ISIS_GenericTlv_Base):
+    name = "ISIS Generic TLV"
+
+
+class ISIS_GenericSubTlv(_ISIS_GenericTlv_Base):
+    name = "ISIS Generic Sub-TLV"
+
+
+#######################################################################
+##  ISIS Sub-TLVs for TLVs 22, 23, 141, 222, 223                     ##
+#######################################################################
+_isis_subtlv_classes_1 = {
+    3:  "ISIS_AdministrativeGroupSubTlv",
+    4:  "ISIS_LinkLocalRemoteIdentifiersSubTlv",
+    6:  "ISIS_IPv4InterfaceAddressSubTlv",
+    8:  "ISIS_IPv4NeighborAddressSubTlv",
+    9:  "ISIS_MaximumLinkBandwidthSubTlv",
+    10: "ISIS_MaximumReservableLinkBandwidthSubTlv",
+    11: "ISIS_UnreservedBandwidthSubTlv",
+    12: "ISIS_IPv6InterfaceAddressSubTlv",
+    13: "ISIS_IPv6NeighborAddressSubTlv",
+    18: "ISIS_TEDefaultMetricSubTlv"
+}
+
+_isis_subtlv_names_1 = {
+    3:  "Administrative Group (Color)",
+    4:  "Link Local/Remote Identifiers",
+    6:  "IPv4 Interface Address",
+    8:  "IPv4 Neighbor Address",
+    9:  "Maximum Link Bandwidth",
+    10: "Maximum Reservable Link Bandwidth",
+    11: "Unreserved Bandwidth",
+    12: "IPv6 Interface Address",
+    13: "IPv6 Neighbor Address",
+    18: "TE Default Metric"
+}
+
+
+def _ISIS_GuessSubTlvClass_1(p, **kargs):
+    return _ISIS_GuessTlvClass_Helper(_isis_subtlv_classes_1, "ISIS_GenericSubTlv", p, **kargs)
+
+
+class ISIS_IPv4InterfaceAddressSubTlv(ISIS_GenericSubTlv):
+    name = "ISIS IPv4 Interface Address (S)"
+    fields_desc = [ByteEnumField("type", 6, _isis_subtlv_names_1),
+                   FieldLenField("len", None, length_of= "address", fmt="B"),
+                   IPField("address", "0.0.0.0")]
+
+
+class ISIS_IPv4NeighborAddressSubTlv(ISIS_GenericSubTlv):
+    name = "ISIS IPv4 Neighbor Address (S)"
+    fields_desc = [ByteEnumField("type", 8, _isis_subtlv_names_1),
+                   FieldLenField("len", None, length_of= "address", fmt="B"),
+                   IPField("address", "0.0.0.0")]
+
+
+class ISIS_LinkLocalRemoteIdentifiersSubTlv(ISIS_GenericSubTlv):
+    name = "ISIS Link Local/Remote Identifiers (S)"
+    fields_desc = [ByteEnumField("type", 4, _isis_subtlv_names_1),
+                   FieldLenField("len", 8, fmt="B"),
+                   IntField("localid", "0"),
+                   IntField("remoteid", "0")]
+
+
+class ISIS_IPv6InterfaceAddressSubTlv(ISIS_GenericSubTlv):
+    name = "ISIS IPv6 Interface Address (S)"
+    fields_desc = [ByteEnumField("type", 12, _isis_subtlv_names_1),
+                   FieldLenField("len", None, length_of= "address", fmt="B"),
+                   IP6Field("address", "::")]
+
+
+class ISIS_IPv6NeighborAddressSubTlv(ISIS_GenericSubTlv):
+    name = "ISIS IPv6 Neighbor Address (S)"
+    fields_desc = [ByteEnumField("type", 13, _isis_subtlv_names_1),
+                   FieldLenField("len", None, length_of= "address", fmt="B"),
+                   IP6Field("address", "::")]
+
+class ISIS_AdministrativeGroupSubTlv(ISIS_GenericSubTlv):
+    name = "Administrative Group SubTLV (Color)"
+    fields_desc = [ByteEnumField("code", 3, _isis_subtlv_names_1),
+                   FieldLenField("len", None, length_of="admingroup", fmt="B"),
+                   IPField("admingroup", "0.0.0.1")]
+
+class ISIS_MaximumLinkBandwidthSubTlv(ISIS_GenericSubTlv):
+    name = "Maximum Link Bandwidth SubTLV"
+    fields_desc = [ByteEnumField("type", 9, _isis_subtlv_names_1),
+                   FieldLenField("len", None, length_of="maxbw", fmt="B"), 
+                   IEEEFloatField("maxbw", 1000)] # in B/s
+
+class ISIS_MaximumReservableLinkBandwidthSubTlv(ISIS_GenericSubTlv):
+    name = "Maximum Reservable Link Bandwidth SubTLV"
+    fields_desc = [ByteEnumField("type", 10, _isis_subtlv_names_1),
+                   FieldLenField("len", None, length_of="maxrsvbw", fmt="B"),
+                   IEEEFloatField("maxrsvbw", 1000)] # in B/s
+
+class ISIS_UnreservedBandwidthSubTlv(ISIS_GenericSubTlv):
+    name = "Unreserved Bandwidth SubTLV"
+    fields_desc = [ByteEnumField("type", 11, _isis_subtlv_names_1),
+                   FieldLenField("len", None, length_of="unrsvbw", fmt="B"),
+                   FieldListField("unrsvbw", [1000,1000,1000,1000,1000,1000,1000,1000], IEEEFloatField("", 1000), count_from= lambda pkt: pkt.len / 4 )] # in B/s
+
+class ISIS_TEDefaultMetricSubTlv(ISIS_GenericSubTlv):
+    name = "TE Default Metric SubTLV"
+    fields_desc = [ByteEnumField("type", 18, _isis_subtlv_names_1),
+                   FieldLenField("len", None, length_of="temetric", adjust=lambda pkt,x:x-1, fmt="B"),
+                   ThreeBytesField("temetric", 1000)]
+
+
+#######################################################################
+##  ISIS Sub-TLVs for TLVs 135, 235, 236, and 237                    ##
+#######################################################################
+_isis_subtlv_classes_2 = {
+    1:  "ISIS_32bitAdministrativeTagSubTlv",
+    2:  "ISIS_64bitAdministrativeTagSubTlv"
+}
+
+_isis_subtlv_names_2 = {
+    1:  "32-bit Administrative Tag",
+    2:  "64-bit Administrative Tag"
+}
+
+
+def _ISIS_GuessSubTlvClass_2(p, **kargs):
+    return _ISIS_GuessTlvClass_Helper(_isis_subtlv_classes_2, "ISIS_GenericSubTlv", p, **kargs)
+
+
+class ISIS_32bitAdministrativeTagSubTlv(ISIS_GenericSubTlv):
+    name = "ISIS 32-bit Administrative Tag (S)"
+    fields_desc = [ByteEnumField("type", 1, _isis_subtlv_names_2),
+                   FieldLenField("len", None, length_of= "tags", fmt="B"),
+                   FieldListField("tags", [], IntField("", 0), count_from= lambda pkt: pkt.len // 4)]
+
+
+class ISIS_64bitAdministrativeTagSubTlv(ISIS_GenericSubTlv):
+    name = "ISIS 64-bit Administrative Tag (S)"
+    fields_desc = [ByteEnumField("type", 2, _isis_subtlv_names_2),
+                   FieldLenField("len", None, length_of= "tags", fmt="B"),
+                   FieldListField("tags", [], LongField("", 0), count_from= lambda pkt: pkt.len // 8)]
 
 
 #######################################################################
@@ -283,23 +462,7 @@ _isis_tlv_names = {
 
 
 def _ISIS_GuessTlvClass(p, **kargs):
-    cls = conf.raw_layer
-    if len(p) >= 2:
-        tlvtype = struct.unpack("!B", p[0])[0]
-        clsname = _isis_tlv_classes.get(tlvtype, "ISIS_GenericTlv")
-        cls = globals()[clsname]
-
-    return cls(p, **kargs)
-
-
-class ISIS_GenericTlv(Packet):
-    name = "ISIS Generic TLV"
-    fields_desc = [ByteEnumField("type", 0, _isis_tlv_names),
-                   FieldLenField("len", None, length_of="val", fmt="B"),
-                   BoundStrLenField("val", "", length_from=lambda pkt: pkt.len)]
-
-    def guess_payload_class(self, p):
-        return conf.padding_layer
+    return _ISIS_GuessTlvClass_Helper(_isis_tlv_classes, "ISIS_GenericTlv", p, **kargs)
 
 
 class ISIS_AreaEntry(Packet):
@@ -347,20 +510,6 @@ class ISIS_DynamicHostnameTlv(ISIS_GenericTlv):
                    BoundStrLenField("hostname", "", length_from=lambda pkt: pkt.len)]
 
 
-class ISIS_GenericSubTlv(Packet):
-    name = "ISIS Generic Sub-TLV"
-    fields_desc = [ByteField("type", 0),
-                   FieldLenField("len", None, length_of="val", fmt="B"),
-                   BoundStrLenField("val", "", length_from=lambda pkt: pkt.len)]
-
-    def guess_payload_class(self, p):
-        return conf.padding_layer
-
-
-def _isis_guess_subtlv_cls(p, **kargs):
-    return ISIS_GenericSubTlv(p, **kargs)
-
-
 class ISIS_ExtendedIpPrefix(Packet):
     name = "ISIS Extended IP Prefix"
     fields_desc = [
@@ -369,13 +518,18 @@ class ISIS_ExtendedIpPrefix(Packet):
         BitField("subtlvindicator", 0, 1),
         BitFieldLenField("pfxlen", None, 6, length_of="pfx"),
         IPPrefixField("pfx", None, wordbytes=1, length_from=lambda x: x.pfxlen),
-        ConditionalField(FieldLenField("subtlvslen", None, length_of=lambda x: x.subtlvs, fmt= "B"), lambda pkt: pkt.subtlvindicator == 1), 
-        ConditionalField(PacketListField("subtlvs", [], _isis_guess_subtlv_cls, length_from=lambda x: x.subtlvslen), lambda pkt: pkt.subtlvindicator == 1)
+        ConditionalField(FieldLenField("subtlvslen", None, length_of="subtlvs", fmt= "B"), lambda pkt: pkt.subtlvindicator == 1),
+        ConditionalField(PacketListField("subtlvs", [], _ISIS_GuessSubTlvClass_2, length_from=lambda x: x.subtlvslen), lambda pkt: pkt.subtlvindicator == 1)
     ]
 
     def extract_padding(self, s):
         return "", s
 
+class ISIS_TERouterIDTlv(ISIS_GenericTlv):
+    name = "ISIS TE Router ID TLV"
+    fields_desc = [ByteEnumField("type", 134, _isis_tlv_names),
+                   FieldLenField("len", None, length_of= "routerid", fmt="B"),
+                   IPField("routerid", "0.0.0.0")]
  
 class ISIS_ExtendedIpReachabilityTlv(ISIS_GenericTlv):
     name = "ISIS Extended IP Reachability TLV"
@@ -386,15 +540,17 @@ class ISIS_ExtendedIpReachabilityTlv(ISIS_GenericTlv):
 
 class ISIS_ExtendedIsNeighbourEntry(Packet):
     name = "ISIS Extended IS Neighbour Entry"
-    fields_desc = [ISIS_NodeIdField("neighbourid", "0102.0304.0506.07"),
-                   ThreeBytesField("metric", 1),
-                   FieldLenField("subtlvslen", None, length_of="subtlvs", fmt= "B"),
-                   ConditionalField(PacketListField("subtlvs", [], _isis_guess_subtlv_cls, length_from=lambda x: x.subtlvslen), lambda pkt: pkt.subtlvslen > 0)]
+    fields_desc = [
+        ISIS_NodeIdField("neighbourid", "0102.0304.0506.07"),
+        ThreeBytesField("metric", 1),
+        FieldLenField("subtlvslen", None, length_of="subtlvs", fmt= "B"),
+        PacketListField("subtlvs", [], _ISIS_GuessSubTlvClass_1, length_from=lambda x: x.subtlvslen)
+    ]
 
     def extract_padding(self, s):
         return "", s
 
-    
+
 class ISIS_ExtendedIsReachabilityTlv(ISIS_GenericTlv):
     name = "ISIS Extended IS Reachability TLV"
     fields_desc = [ByteEnumField("type", 22, _isis_tlv_names),
@@ -406,7 +562,7 @@ class ISIS_IpInterfaceAddressTlv(ISIS_GenericTlv):
     name = "ISIS IP Interface Address TLV"
     fields_desc = [ByteEnumField("type", 132, _isis_tlv_names),
                    FieldLenField("len", None, length_of= "addresses", fmt="B"),
-                   FieldListField("addresses", [], IPField("", "0.0.0.0"), count_from= lambda pkt: pkt.len / 4)]
+                   FieldListField("addresses", [], IPField("", "0.0.0.0"), count_from= lambda pkt: pkt.len // 4)]
 
 
 class ISIS_Ipv6InterfaceAddressTlv(ISIS_GenericTlv):
@@ -414,7 +570,7 @@ class ISIS_Ipv6InterfaceAddressTlv(ISIS_GenericTlv):
     fields_desc = [
         ByteEnumField("type", 232, _isis_tlv_names),
         FieldLenField("len", None, length_of="addresses", fmt="B"),
-        IP6ListField("addresses", [], count_from=lambda pkt: pkt.len / 16)
+        IP6ListField("addresses", [], count_from=lambda pkt: pkt.len // 16)
     ]
 
 
@@ -428,8 +584,8 @@ class ISIS_Ipv6Prefix(Packet):
         BitField("reserved", 0, 5),
         FieldLenField("pfxlen", None, length_of="pfx", fmt="B"),
         IP6PrefixField("pfx", None, wordbytes=1, length_from=lambda x: x.pfxlen),
-        ConditionalField(FieldLenField("subtlvslen", None, length_of=lambda x: x.subtlvs, fmt= "B"), lambda pkt: pkt.subtlvindicator == 1), 
-        ConditionalField(PacketListField("subtlvs", [], _isis_guess_subtlv_cls, length_from=lambda x: x.subtlvslen), lambda pkt: pkt.subtlvindicator == 1)
+        ConditionalField(FieldLenField("subtlvslen", None, length_of="subtlvs", fmt= "B"), lambda pkt: pkt.subtlvindicator == 1),
+        ConditionalField(PacketListField("subtlvs", [], _ISIS_GuessSubTlvClass_2, length_from=lambda x: x.subtlvslen), lambda pkt: pkt.subtlvindicator == 1)
     ]
 
     def extract_padding(self, s):
@@ -447,7 +603,7 @@ class ISIS_IsNeighbourTlv(ISIS_GenericTlv):
     name = "ISIS IS Neighbour TLV"
     fields_desc = [ByteEnumField("type", 6, _isis_tlv_names),
                    FieldLenField("len", None, length_of= "neighbours", fmt="B"),
-                   FieldListField("neighbours", [], MACField("", "00.00.00.00.00.00"), count_from= lambda pkt: pkt.len / 6)]
+                   FieldListField("neighbours", [], MACField("", "00.00.00.00.00.00"), count_from= lambda pkt: pkt.len // 6)]
 
 
 class ISIS_LspEntry(Packet):
@@ -466,7 +622,7 @@ class ISIS_LspEntryTlv(ISIS_GenericTlv):
     fields_desc = [
         ByteEnumField("type", 9, _isis_tlv_names),
         FieldLenField("len", None, length_of="entries", fmt="B"),
-        PacketListField("entries", [], ISIS_LspEntry, count_from=lambda pkt: pkt.len / 16)
+        PacketListField("entries", [], ISIS_LspEntry, count_from=lambda pkt: pkt.len // 16)
     ]
 
 
@@ -535,7 +691,7 @@ class ISIS_InternalIpReachabilityTlv(ISIS_GenericTlv):
     fields_desc = [
         ByteEnumField("type", 128, _isis_tlv_names),
         FieldLenField("len", None, length_of="entries", fmt="B"),
-        PacketListField("entries", [], ISIS_IpReachabilityEntry, count_from=lambda x: x.len / 12)
+        PacketListField("entries", [], ISIS_IpReachabilityEntry, count_from=lambda x: x.len // 12)
     ]
 
 
@@ -544,7 +700,7 @@ class ISIS_ExternalIpReachabilityTLV(ISIS_GenericTlv):
     fields_desc = [
         ByteEnumField("type", 130, _isis_tlv_names),
         FieldLenField("len", None, length_of="entries", fmt="B"),
-        PacketListField("entries", [], ISIS_IpReachabilityEntry, count_from=lambda x: x.len / 12)
+        PacketListField("entries", [], ISIS_IpReachabilityEntry, count_from=lambda x: x.len // 12)
     ]
 
 
@@ -566,7 +722,7 @@ class ISIS_IsReachabilityTlv(ISIS_GenericTlv):
         ByteEnumField("type", 2, _isis_tlv_names),
         FieldLenField("len", None, fmt="B", length_of="neighbours", adjust=lambda pkt,x: x+1),
         ByteField("virtual", 0),
-        PacketListField("neighbours", [], ISIS_IsReachabilityEntry, count_from=lambda x: (x.len - 1) / 11)
+        PacketListField("neighbours", [], ISIS_IsReachabilityEntry, count_from=lambda x: (x.len - 1) // 11)
     ]
 
 #######################################################################
@@ -634,7 +790,7 @@ class _ISIS_PduLengthField(FieldLenField):
 
 class _ISIS_TlvListField(PacketListField):
     def __init__(self):
-        PacketListField.__init__(self, "tlvs", [], _ISIS_GuessTlvClass, count_from= None, length_from= lambda pkt: pkt.pdulength - pkt.underlayer.hdrlen)
+        PacketListField.__init__(self, "tlvs", [], _ISIS_GuessTlvClass, length_from= lambda pkt: pkt.pdulength - pkt.underlayer.hdrlen)
 
 
 class _ISIS_LAN_HelloBase(_ISIS_PduBase):
@@ -767,3 +923,4 @@ bind_layers(ISIS_CommonHdr, ISIS_L1_CSNP, hdrlen=33, pdutype=24)
 bind_layers(ISIS_CommonHdr, ISIS_L2_CSNP, hdrlen=33, pdutype=25)
 bind_layers(ISIS_CommonHdr, ISIS_L1_PSNP, hdrlen=17, pdutype=26)
 bind_layers(ISIS_CommonHdr, ISIS_L2_PSNP, hdrlen=17, pdutype=27)
+

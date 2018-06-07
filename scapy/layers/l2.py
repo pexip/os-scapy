@@ -1,4 +1,4 @@
-## This file is part of Scapy
+# This file is part of Scapy
 ## See http://www.secdev.org/projects/scapy for more informations
 ## Copyright (C) Philippe Biondi <phil@secdev.org>
 ## This program is published under a GPLv2 license
@@ -7,19 +7,23 @@
 Classes and functions for layer 2 protocols.
 """
 
+from __future__ import absolute_import
+from __future__ import print_function
 import os, struct, time, socket
 
+import scapy
 from scapy.base_classes import Net
 from scapy.config import conf
 from scapy.data import *
+from scapy.compat import *
 from scapy.packet import *
 from scapy.ansmachine import *
 from scapy.plist import SndRcvList
 from scapy.fields import *
-from scapy.sendrecv import *
+from scapy.sendrecv import srp, srp1, srpflood
 from scapy.arch import get_if_hwaddr
-from scapy.arch.consts import LOOPBACK_NAME
 from scapy.utils import inet_ntoa, inet_aton
+from scapy.error import warning
 if conf.route is None:
     # unused import, only to initialize conf.route
     import scapy.route
@@ -55,14 +59,14 @@ conf.netcache.new_cache("arp_cache", 120) # cache entries expire after 120s
 @conf.commands.register
 def getmacbyip(ip, chainCC=0):
     """Return MAC address corresponding to a given IP address"""
-    if isinstance(ip,Net):
-        ip = iter(ip).next()
+    if isinstance(ip, Net):
+        ip = next(iter(ip))
     ip = inet_ntoa(inet_aton(ip))
-    tmp = map(ord, inet_aton(ip))
+    tmp = [orb(e) for e in inet_aton(ip)]
     if (tmp[0] & 0xf0) == 0xe0: # mcast @
         return "01:00:5e:%.2x:%.2x:%.2x" % (tmp[1]&0x7f,tmp[2],tmp[3])
     iff,a,gw = conf.route.route(ip)
-    if ( (iff == LOOPBACK_NAME) or (ip == conf.route.get_if_bcast(iff)) ):
+    if ( (iff == scapy.consts.LOOPBACK_INTERFACE) or (ip == conf.route.get_if_bcast(iff)) ):
         return "ff:ff:ff:ff:ff:ff"
     if gw != "0.0.0.0":
         ip = gw
@@ -103,13 +107,17 @@ class DestMACField(MACField):
         return MACField.i2h(self, pkt, x)
     def i2m(self, pkt, x):
         return MACField.i2m(self, pkt, self.i2h(pkt, x))
-        
+
+
 class SourceMACField(MACField):
-    def __init__(self, name):
+    __slots__ = ["getif"]
+    def __init__(self, name, getif=None):
         MACField.__init__(self, name, None)
+        self.getif = ((lambda pkt: pkt.payload.route()[0])
+                      if getif is None else getif)
     def i2h(self, pkt, x):
         if x is None:
-            iff, a, gw = pkt.payload.route()
+            iff = self.getif(pkt)
             if iff is None:
                 iff = conf.iface
             if iff:
@@ -122,35 +130,27 @@ class SourceMACField(MACField):
         return MACField.i2h(self, pkt, x)
     def i2m(self, pkt, x):
         return MACField.i2m(self, pkt, self.i2h(pkt, x))
-        
-class ARPSourceMACField(MACField):
-    def __init__(self, name):
-        MACField.__init__(self, name, None)
-    def i2h(self, pkt, x):
-        if x is None:
-            iff,a,gw = pkt.route()
-            if iff:
-                try:
-                    x = get_if_hwaddr(iff)
-                except:
-                    pass
-            if x is None:
-                x = "00:00:00:00:00:00"
-        return MACField.i2h(self, pkt, x)
-    def i2m(self, pkt, x):
-        return MACField.i2m(self, pkt, self.i2h(pkt, x))
 
+
+class ARPSourceMACField(SourceMACField):
+    def __init__(self, name):
+        super(ARPSourceMACField, self).__init__(
+            name,
+            getif=lambda pkt: pkt.route()[0],
+        )
 
 
 ### Layers
 
 ETHER_TYPES['802_AD'] = 0x88a8
+ETHER_TYPES['802_1AE'] = ETH_P_MACSEC
 
 class Ether(Packet):
     name = "Ethernet"
     fields_desc = [ DestMACField("dst"),
                     SourceMACField("src"),
                     XShortEnumField("type", 0x9000, ETHER_TYPES) ]
+    __slots__ = ["_defrag_pos"]
     def hashret(self):
         return struct.pack("H",self.type)+self.payload.hashret()
     def answers(self, other):
@@ -203,9 +203,14 @@ conf.neighbor.register_l3(Dot3, LLC, l2_register_l3)
 
 
 class CookedLinux(Packet):
+    # Documentation: http://www.tcpdump.org/linktypes/LINKTYPE_LINUX_SLL.html
     name = "cooked linux"
+    # from wireshark's database
     fields_desc = [ ShortEnumField("pkttype",0, {0: "unicast",
-                                                 4:"sent-by-us"}), #XXX incomplete
+                                                 1: "broadcast",
+                                                 2: "multicast",
+                                                 3: "unicast-to-another-host",
+                                                 4:"sent-by-us"}),
                     XShortField("lladdrtype",512),
                     ShortField("lladdrlen",0),
                     StrFixedLenField("src","",8),
@@ -271,266 +276,6 @@ class STP(Packet):
                     BCDFloatField("fwddelay", 15) ]
 
 
-
-#
-# EAPOL
-#
-
-#________________________________________________________________________
-#
-# EAPOL protocol version
-# IEEE Std 802.1X-2010 - Section 11.3.1
-#________________________________________________________________________
-#
-
-eapol_versions = {
-    0x1: "802.1X-2001",
-    0x2: "802.1X-2004",
-    0x3: "802.1X-2010",
-}
-
-#________________________________________________________________________
-#
-# EAPOL Packet Types
-# IEEE Std 802.1X-2010 - Table 11.3
-#________________________________________________________________________
-#
-
-eapol_types = {
-    0x0: "EAP-Packet",  # "EAPOL-EAP" in 801.1X-2010
-    0x1: "EAPOL-Start",
-    0x2: "EAPOL-Logoff",
-    0x3: "EAPOL-Key",
-    0x4: "EAPOL-Encapsulated-ASF-Alert",
-    0x5: "EAPOL-MKA",
-    0x6: "EAPOL-Announcement (Generic)",
-    0x7: "EAPOL-Announcement (Specific)",
-    0x8: "EAPOL-Announcement-Req"
-}
-
-
-class EAPOL(Packet):
-
-    """
-    EAPOL - IEEE Std 802.1X-2010
-    """
-
-    name = "EAPOL"
-    fields_desc = [
-        ByteEnumField("version", 1, eapol_versions),
-        ByteEnumField("type", 0, eapol_types),
-        LenField("len", None, "H")
-    ]
-
-    EAP_PACKET = 0
-    START = 1
-    LOGOFF = 2
-    KEY = 3
-    ASF = 4
-
-    def extract_padding(self, s):
-        l = self.len
-        return s[:l], s[l:]
-
-    def hashret(self):
-        return chr(self.type) + self.payload.hashret()
-
-    def answers(self, other):
-        if isinstance(other, EAPOL):
-            if ((self.type == self.EAP_PACKET) and
-               (other.type == self.EAP_PACKET)):
-                return self.payload.answers(other.payload)
-        return 0
-
-    def mysummary(self):
-        return self.sprintf("EAPOL %EAPOL.type%")
-
-
-#
-# EAP
-#
-
-
-#________________________________________________________________________
-#
-# EAP methods types
-# http://www.iana.org/assignments/eap-numbers/eap-numbers.xhtml#eap-numbers-4
-#________________________________________________________________________
-#
-
-eap_types = {
-    0:   "Reserved",
-    1:   "Identity",
-    2:   "Notification",
-    3:   "Legacy Nak",
-    4:   "MD5-Challenge",
-    5:   "One-Time Password (OTP)",
-    6:   "Generic Token Card (GTC)",
-    7:   "Allocated - RFC3748",
-    8:   "Allocated - RFC3748",
-    9:   "RSA Public Key Authentication",
-    10:  "DSS Unilateral",
-    11:  "KEA",
-    12:  "KEA-VALIDATE",
-    13:  "EAP-TLS",
-    14:  "Defender Token (AXENT)",
-    15:  "RSA Security SecurID EAP",
-    16:  "Arcot Systems EAP",
-    17:  "EAP-Cisco Wireless",
-    18:  "GSM Subscriber Identity Modules (EAP-SIM)",
-    19:  "SRP-SHA1",
-    20:  "Unassigned",
-    21:  "EAP-TTLS",
-    22:  "Remote Access Service",
-    23:  "EAP-AKA Authentication",
-    24:  "EAP-3Com Wireless",
-    25:  "PEAP",
-    26:  "MS-EAP-Authentication",
-    27:  "Mutual Authentication w/Key Exchange (MAKE)",
-    28:  "CRYPTOCard",
-    29:  "EAP-MSCHAP-V2",
-    30:  "DynamID",
-    31:  "Rob EAP",
-    32:  "Protected One-Time Password",
-    33:  "MS-Authentication-TLV",
-    34:  "SentriNET",
-    35:  "EAP-Actiontec Wireless",
-    36:  "Cogent Systems Biometrics Authentication EAP",
-    37:  "AirFortress EAP",
-    38:  "EAP-HTTP Digest",
-    39:  "SecureSuite EAP",
-    40:  "DeviceConnect EAP",
-    41:  "EAP-SPEKE",
-    42:  "EAP-MOBAC",
-    43:  "EAP-FAST",
-    44:  "ZoneLabs EAP (ZLXEAP)",
-    45:  "EAP-Link",
-    46:  "EAP-PAX",
-    47:  "EAP-PSK",
-    48:  "EAP-SAKE",
-    49:  "EAP-IKEv2",
-    50:  "EAP-AKA",
-    51:  "EAP-GPSK",
-    52:  "EAP-pwd",
-    53:  "EAP-EKE Version 1",
-    54:  "EAP Method Type for PT-EAP",
-    55:  "TEAP",
-    254: "Reserved for the Expanded Type",
-    255: "Experimental",
-}
-
-
-#________________________________________________________________________
-#
-# EAP codes
-# http://www.iana.org/assignments/eap-numbers/eap-numbers.xhtml#eap-numbers-1
-#________________________________________________________________________
-#
-
-eap_codes = {
-    1: "Request",
-    2: "Response",
-    3: "Success",
-    4: "Failure",
-    5: "Initiate",
-    6: "Finish"
-}
-
-
-class EAP(Packet):
-
-    """
-    RFC 3748 - Extensible Authentication Protocol (EAP)
-    """
-
-    name = "EAP"
-    fields_desc = [
-        ByteEnumField("code", 4, eap_codes),
-        ByteField("id", 0),
-        ShortField("len", None),
-        ConditionalField(ByteEnumField("type", 0, eap_types),
-                         lambda pkt:pkt.code not in [
-                             EAP.SUCCESS, EAP.FAILURE]),
-        ConditionalField(ByteEnumField("desired_auth_type", 0, eap_types),
-                         lambda pkt:pkt.code == EAP.RESPONSE and pkt.type == 3),
-        ConditionalField(
-            StrLenField("identity", '', length_from=lambda pkt: pkt.len - 5),
-                         lambda pkt: pkt.code == EAP.RESPONSE and hasattr(pkt, 'type') and pkt.type == 1)
-    ]
-
-    #________________________________________________________________________
-    #
-    # EAP codes
-    # http://www.iana.org/assignments/eap-numbers/eap-numbers.xhtml#eap-numbers-1
-    #________________________________________________________________________
-    #
-
-    REQUEST = 1
-    RESPONSE = 2
-    SUCCESS = 3
-    FAILURE = 4
-    INITIATE = 5
-    FINISH = 6
-
-    def answers(self, other):
-        if isinstance(other, EAP):
-            if self.code == self.REQUEST:
-                return 0
-            elif self.code == self.RESPONSE:
-                if ((other.code == self.REQUEST) and
-                   (other.type == self.type)):
-                    return 1
-            elif other.code == self.RESPONSE:
-                return 1
-        return 0
-
-    def post_build(self, p, pay):
-        if self.len is None:
-            l = len(p) + len(pay)
-            p = p[:2] + chr((l >> 8) & 0xff) + chr(l & 0xff) + p[4:]
-        return p + pay
-
-
-class EAP_TLS(Packet):
-
-    """
-    RFC 5216 - "The EAP-TLS Authentication Protocol"
-    """
-
-    name = "EAP-TLS"
-    fields_desc = [
-        BitField('L', 0, 1),
-        BitField('M', 0, 1),
-        BitField('S', 0, 1),
-        BitField('reserved', 0, 5),
-        ConditionalField(
-            IntField('tls_message_len', 0), lambda pkt: pkt.L == 1),
-        ConditionalField(
-            StrLenField('tls_data', '', length_from=lambda pkt: pkt.tls_message_len), lambda pkt: pkt.L == 1)
-    ]
-
-
-class EAP_FAST(Packet):
-
-    """
-    RFC 4851 - "The Flexible Authentication via Secure Tunneling
-    Extensible Authentication Protocol Method (EAP-FAST)"
-    """
-
-    name = "EAP-FAST"
-    fields_desc = [
-        BitField('L', 0, 1),
-        BitField('M', 0, 1),
-        BitField('S', 0, 1),
-        BitField('reserved', 0, 2),
-        BitField('version', 0, 3),
-        ConditionalField(IntField('message_len', 0), lambda pkt: pkt.L == 1),
-        ConditionalField(
-            StrLenField('data', '', length_from=lambda pkt: pkt.message_len), lambda pkt: pkt.L == 1)
-    ]
-
-
-
 class ARP(Packet):
     name = "ARP"
     fields_desc = [ XShortField("hwtype", 0x0001),
@@ -554,7 +299,7 @@ class ARP(Packet):
     def route(self):
         dst = self.pdst
         if isinstance(dst,Gen):
-            dst = iter(dst).next()
+            dst = next(iter(dst))
         return conf.route.route(dst)
     def extract_padding(self, s):
         return "",s
@@ -595,12 +340,78 @@ class GRE(Packet):
                     ConditionalField(XIntField("key",None), lambda pkt:pkt.key_present==1),
                     ConditionalField(XIntField("seqence_number",None), lambda pkt:pkt.seqnum_present==1),
                     ]
+
+    @classmethod
+    def dispatch_hook(cls, _pkt=None, *args, **kargs):
+        if _pkt and struct.unpack("!H", _pkt[2:4])[0] == 0x880b:
+            return GRE_PPTP
+        return cls
+
     def post_build(self, p, pay):
         p += pay
         if self.chksum_present and self.chksum is None:
             c = checksum(p)
-            p = p[:4]+chr((c>>8)&0xff)+chr(c&0xff)+p[6:]
+            p = p[:4]+chb((c>>8)&0xff)+chb(c&0xff)+p[6:]
         return p
+
+
+class GRE_PPTP(GRE):
+
+    """
+    Enhanced GRE header used with PPTP
+    RFC 2637
+    """
+
+    name = "GRE PPTP"
+    fields_desc = [BitField("chksum_present", 0, 1),
+                   BitField("routing_present", 0, 1),
+                   BitField("key_present", 1, 1),
+                   BitField("seqnum_present", 0, 1),
+                   BitField("strict_route_source", 0, 1),
+                   BitField("recursion_control", 0, 3),
+                   BitField("acknum_present", 0, 1),
+                   BitField("flags", 0, 4),
+                   BitField("version", 1, 3),
+                   XShortEnumField("proto", 0x880b, ETHER_TYPES),
+                   ShortField("payload_len", None),
+                   ShortField("call_id", None),
+                   ConditionalField(XIntField("seqence_number", None), lambda pkt: pkt.seqnum_present == 1),
+                   ConditionalField(XIntField("ack_number", None), lambda pkt: pkt.acknum_present == 1)]
+
+    def post_build(self, p, pay):
+        p += pay
+        if self.payload_len is None:
+            pay_len = len(pay)
+            p = p[:4] + chb((pay_len >> 8) & 0xff) + chb(pay_len & 0xff) + p[6:]
+        return p
+
+
+### *BSD loopback layer
+
+class LoIntEnumField(EnumField):
+    def __init__(self, name, default, enum):
+        EnumField.__init__(self, name, default, enum, "!I")
+
+    def m2i(self, pkt, x):
+        return x >> 24
+
+    def i2m(self, pkt, x):
+        return x << 24
+
+# https://github.com/wireshark/wireshark/blob/fe219637a6748130266a0b0278166046e60a2d68/epan/dissectors/packet-null.c
+# https://www.wireshark.org/docs/wsar_html/epan/aftypes_8h.html
+LOOPBACK_TYPES = { 0x2: "IPv4",
+                   0x7: "OSI",
+                   0x10: "Appletalk",
+                   0x17: "Netware IPX/SPX",
+                   0x18: "IPv6", 0x1c: "IPv6", 0x1e: "IPv6" }
+
+class Loopback(Packet):
+    """*BSD loopback layer"""
+
+    name = "Loopback"
+    fields_desc = [ LoIntEnumField("type", 0x2, LOOPBACK_TYPES) ]
+    __slots__ = ["_defrag_pos"]
 
 
 class Dot1AD(Dot1Q):
@@ -617,41 +428,35 @@ bind_layers( Dot1AD,        Dot1Q,         type=0x8100)
 bind_layers( Dot1Q,         Dot1AD,        type=0x88a8)
 bind_layers( Ether,         Ether,         type=1)
 bind_layers( Ether,         ARP,           type=2054)
-bind_layers( Ether,         EAPOL,         type=34958)
-bind_layers( Ether,         EAPOL,         dst='01:80:c2:00:00:03', type=34958)
 bind_layers( CookedLinux,   LLC,           proto=122)
 bind_layers( CookedLinux,   Dot1Q,         proto=33024)
 bind_layers( CookedLinux,   Dot1AD,        type=0x88a8)
 bind_layers( CookedLinux,   Ether,         proto=1)
 bind_layers( CookedLinux,   ARP,           proto=2054)
-bind_layers( CookedLinux,   EAPOL,         proto=34958)
 bind_layers( GRE,           LLC,           proto=122)
 bind_layers( GRE,           Dot1Q,         proto=33024)
 bind_layers( GRE,           Dot1AD,        type=0x88a8)
-bind_layers( GRE,           Ether,         proto=1)
+bind_layers( GRE,           Ether,         proto=0x6558)
 bind_layers( GRE,           ARP,           proto=2054)
-bind_layers( GRE,           EAPOL,         proto=34958)
 bind_layers( GRE,           GRErouting,    { "routing_present" : 1 } )
 bind_layers( GRErouting,    conf.raw_layer,{ "address_family" : 0, "SRE_len" : 0 })
 bind_layers( GRErouting,    GRErouting,    { } )
-bind_layers( EAPOL,         EAP,           type=0)
-bind_layers(EAP,           EAP_TLS,       type=13)
-bind_layers(EAP,           EAP_FAST,      type=43)
 bind_layers( LLC,           STP,           dsap=66, ssap=66, ctrl=3)
 bind_layers( LLC,           SNAP,          dsap=170, ssap=170, ctrl=3)
 bind_layers( SNAP,          Dot1Q,         code=33024)
 bind_layers( SNAP,          Dot1AD,        type=0x88a8)
 bind_layers( SNAP,          Ether,         code=1)
 bind_layers( SNAP,          ARP,           code=2054)
-bind_layers( SNAP,          EAPOL,         code=34958)
 bind_layers( SNAP,          STP,           code=267)
 
 conf.l2types.register(ARPHDR_ETHER, Ether)
 conf.l2types.register_num2layer(ARPHDR_METRICOM, Ether)
 conf.l2types.register_num2layer(ARPHDR_LOOPBACK, Ether)
 conf.l2types.register_layer2num(ARPHDR_ETHER, Dot3)
-conf.l2types.register(144, CookedLinux)  # called LINUX_IRDA, similar to CookedLinux
-conf.l2types.register(113, CookedLinux)
+conf.l2types.register(DLT_LINUX_SLL, CookedLinux)
+conf.l2types.register_num2layer(DLT_LINUX_IRDA, CookedLinux)
+conf.l2types.register(DLT_LOOP, Loopback)
+conf.l2types.register_num2layer(DLT_NULL, Loopback)
 
 conf.l3types.register(ETH_P_ARP, ARP)
 
@@ -670,10 +475,10 @@ arpcachepoison(target, victim, [interval=60]) -> None
     tmac = getmacbyip(target)
     p = Ether(dst=tmac)/ARP(op="who-has", psrc=victim, pdst=target)
     try:
-        while 1:
+        while True:
             sendp(p, iface_hint=target)
             if conf.verb > 1:
-                os.write(1,".")
+                os.write(1, b".")
             time.sleep(interval)
     except KeyboardInterrupt:
         pass
@@ -685,7 +490,7 @@ class ARPingResult(SndRcvList):
 
     def show(self):
         for s,r in self.res:
-            print r.sprintf("%19s,Ether.src% %ARP.psrc%")
+            print(r.sprintf("%19s,Ether.src% %ARP.psrc%"))
 
 
 
@@ -763,7 +568,7 @@ class ARP_am(AnsweringMachine):
         ether = req.getlayer(Ether)
         arp = req.getlayer(ARP)
 
-        if self.optsend.has_key('iface'):
+        if 'iface' in self.optsend:
             iff = self.optsend.get('iface')
         else:
             iff,a,gw = conf.route.route(arp.psrc)
@@ -785,20 +590,20 @@ class ARP_am(AnsweringMachine):
         return resp
 
     def send_reply(self, reply):
-        if self.optsend.has_key('iface'):
+        if 'iface' in self.optsend:
             self.send_function(reply, **self.optsend)
         else:
             self.send_function(reply, iface=self.iff, **self.optsend)
 
     def print_reply(self, req, reply):
-        print "%s ==> %s on %s" % (req.summary(),reply.summary(),self.iff)
+        print("%s ==> %s on %s" % (req.summary(),reply.summary(),self.iff))
 
 
 @conf.commands.register
 def etherleak(target, **kargs):
     """Exploit Etherleak flaw"""
     return srpflood(Ether()/ARP(pdst=target), 
-                    prn=lambda (s,r): conf.padding_layer in r and hexstr(r[conf.padding_layer].load),
+                    prn=lambda s_r: conf.padding_layer in s_r[1] and hexstr(s_r[1][conf.padding_layer].load),
                     filter="arp", **kargs)
 
 

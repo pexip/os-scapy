@@ -11,7 +11,8 @@
 ##                       Arnaud Ebalard  <arnaud.ebalard AT eads DOT net>  ##
 ##                       EADS/CRC security team                            ##
 ##                                                                         ##
-## This program is free software; you can redistribute it and/or modify it ##
+## This file is part of Scapy                                              ##
+## Scapy is free software: you can redistribute it and/or modify it        ##
 ## under the terms of the GNU General Public License version 2 as          ##
 ## published by the Free Software Foundation; version 2.                   ##
 ##                                                                         ##
@@ -22,9 +23,12 @@
 ##                                                                         ##
 #############################################################################
 
+from __future__ import absolute_import
 from scapy.packet import *
 from scapy.fields import *
 from scapy.layers.inet6 import *
+from scapy.compat import orb
+from scapy.modules.six.moves import range
 
 
 #####################################################################
@@ -49,8 +53,8 @@ _cdp_tlv_cls = { 0x0001: "CDPMsgDeviceID",
                  0x000f: "CDPMsgVoIPVLANQuery",
                  0x0010: "CDPMsgPower",
                  0x0011: "CDPMsgMTU",
-#                 0x0012: "CDPMsgTrustBitmap",
-#                 0x0013: "CDPMsgUntrustedPortCoS",
+                 0x0012: "CDPMsgTrustBitmap",
+                 0x0013: "CDPMsgUntrustedPortCoS",
 #                 0x0014: "CDPMsgSystemName",
 #                 0x0015: "CDPMsgSystemOID",
                  0x0016: "CDPMsgMgmtAddr",
@@ -67,7 +71,7 @@ _cdp_tlv_types = { 0x0001: "Device ID",
                    0x0006: "Platform",
                    0x0007: "IP Prefix",
                    0x0008: "Protocol Hello",
-                   0x0009: "VTP Mangement Domain", # CDPv2
+                   0x0009: "VTP Management Domain", # CDPv2
                    0x000a: "Native VLAN",    # CDPv2
                    0x000b: "Duplex",        # 
                    0x000c: "CDP Unknown command (send us a pcap file)",
@@ -110,8 +114,8 @@ class CDPMsgDeviceID(CDPMsgGeneric):
     type = 0x0001
 
 _cdp_addr_record_ptype = {0x01: "NLPID", 0x02: "802.2"}
-_cdp_addrrecord_proto_ip = "\xcc"
-_cdp_addrrecord_proto_ipv6 = "\xaa\xaa\x03\x00\x00\x00\x86\xdd"
+_cdp_addrrecord_proto_ip = b"\xcc"
+_cdp_addrrecord_proto_ipv6 = b"\xaa\xaa\x03\x00\x00\x00\x86\xdd"
 
 class CDPAddrRecord(Packet):
     name = "CDP Address"
@@ -143,8 +147,8 @@ class CDPAddrRecordIPv6(CDPAddrRecord):
 def _CDPGuessAddrRecord(p, **kargs):
     cls = conf.raw_layer
     if len(p) >= 2:
-        plen = struct.unpack("B", p[1])[0]
-        proto = ''.join(struct.unpack("s" * plen, p[2:plen + 2])[0:plen])
+        plen = orb(p[1])
+        proto = p[2:plen + 2]
 
         if proto == _cdp_addrrecord_proto_ip:
             clsname = "CDPAddrRecordIPv4"
@@ -184,7 +188,7 @@ _cdp_capabilities = ["Router",
                      "Switch",
                      "Host",
                      "IGMPCapable",
-                     "Repeater"] + ["Bit%d" % x for x in xrange(25, 0, -1)]
+                     "Repeater"] + ["Bit%d" % x for x in range(25, 0, -1)]
 
 
 class CDPMsgCapabilities(CDPMsgGeneric):
@@ -213,10 +217,16 @@ class CDPMsgIPPrefix(CDPMsgGeneric):
                     ShortField("len", 8),
                     IPField("defaultgw", "192.168.0.1") ]
 
-# TODO : Do me !!!!!! 0x0008
 class CDPMsgProtoHello(CDPMsgGeneric):
     name = "Protocol Hello"
     type = 0x0008
+    fields_desc = [ XShortEnumField("type", 0x0008, _cdp_tlv_types),
+                    ShortField("len", 32),
+                    X3BytesField("oui", 0x00000c),
+                    XShortField("protocol_id", 0x0),
+                    # TLV length (len) - 2 (type) - 2 (len) - 3 (OUI) - 2
+                    # (Protocol ID)
+                    StrLenField("data", "", length_from=lambda p: p.len - 9) ]
 
 class CDPMsgVTPMgmtDomain(CDPMsgGeneric):
     name = "VTP Management Domain"
@@ -239,16 +249,18 @@ class CDPMsgVoIPVLANReply(CDPMsgGeneric):
     fields_desc = [ XShortEnumField("type", 0x000e, _cdp_tlv_types),
                     ShortField("len", 7),
                     ByteField("status?", 1),
-                    ShortField("vlan", 1)]
+                    ShortField("vlan", 1) ]
 
 
-# TODO : Do me !!! 0x000F
 class CDPMsgVoIPVLANQuery(CDPMsgGeneric):
     name = "VoIP VLAN Query"
     type = 0x000f
-
-#    fields_desc = [XShortEnumField("type", 0x000f, _cdp_tlv_types),
-#		   FieldLenField("len", None, "val", "!H") ]
+    fields_desc = [ XShortEnumField("type", 0x000f, _cdp_tlv_types),
+                    ShortField("len", 7),
+                    XByteField("unknown1", 0),
+                    ShortField("vlan", 1),
+                    # TLV length (len) - 2 (type) - 2 (len) - 1 (unknown1) - 2 (vlan)
+                    StrLenField("unknown2", "", length_from=lambda p: p.len - 7) ]
 
 
 class _CDPPowerField(ShortField):
@@ -273,6 +285,18 @@ class CDPMsgMTU(CDPMsgGeneric):
                     ShortField("len", 6),
                     ShortField("mtu", 1500)]
 
+class CDPMsgTrustBitmap(CDPMsgGeneric):
+    name = "Trust Bitmap"
+    fields_desc = [ XShortEnumField("type", 0x0012, _cdp_tlv_types),
+                    ShortField("len", 5),
+                    XByteField("trust_bitmap", 0x0) ]
+
+class CDPMsgUntrustedPortCoS(CDPMsgGeneric):
+    name = "Untrusted Port CoS"
+    fields_desc = [ XShortEnumField("type", 0x0013, _cdp_tlv_types),
+                    ShortField("len", 5),
+                    XByteField("untrusted_port_cos", 0x0) ]
+
 class CDPMsgMgmtAddr(CDPMsgAddr):
     name = "Management Address"
     type = 0x0016
@@ -294,10 +318,10 @@ class _CDPChecksum:
         packet should not be altered."""
         if len(pkt) % 2:
             last_chr = pkt[-1]
-            if last_chr <= '\x80':
-                return pkt[:-1] + '\x00' + last_chr
+            if last_chr <= b'\x80':
+                return pkt[:-1] + b'\x00' + last_chr
             else:
-                return pkt[:-1] + '\xff' + chr(ord(last_chr) - 1)
+                return pkt[:-1] + b'\xff' + chb(orb(last_chr) - 1)
         else:
             return pkt
 

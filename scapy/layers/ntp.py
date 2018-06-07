@@ -8,6 +8,7 @@ NTP (Network Time Protocol).
 References : RFC 5905, RC 1305, ntpd source code
 """
 
+from __future__ import absolute_import
 import struct
 import time
 import datetime
@@ -16,12 +17,15 @@ from scapy.packet import Packet, bind_layers
 from scapy.fields import (BitField, BitEnumField, ByteField, ByteEnumField, \
 XByteField, SignedByteField, FlagsField, ShortField, LEShortField, IntField,\
 LEIntField, FixedPointField, IPField, StrField, StrFixedLenField,\
-StrFixedLenEnumField, PacketField, PacketLenField, PacketListField,\
-FieldListField, ConditionalField, PadField)
+StrFixedLenEnumField, XStrFixedLenField, PacketField, PacketLenField,\
+PacketListField, FieldListField, ConditionalField, PadField)
 from scapy.layers.inet6 import IP6Field
 from scapy.layers.inet import UDP
-from scapy.utils import lhex
+from scapy.utils import issubtype, lhex
+from scapy.compat import *
 from scapy.config import conf
+import scapy.modules.six as six
+from scapy.modules.six.moves import range
 
 
 
@@ -55,26 +59,11 @@ _NTP_HASH_SIZE = 128
 
 class XLEShortField(LEShortField):
     """
-    XLEShortField which value is encoded in little endian.
+    XShortField which value is encoded in little endian.
     """
 
     def i2repr(self, pkt, x):
         return lhex(self.i2h(pkt, x))
-
-
-class XStrFixedLenField(StrFixedLenField):
-    """
-    StrFixedLenField which value is printed as hexadecimal.
-    """
-
-    def i2repr(self, pkt, x):
-        output = ""
-        length = len(x)
-        len_from_val = self.length_from(pkt)
-        max_idx = length if length < len_from_val else len_from_val
-        for i in range(0, max_idx):
-            output += x[i].encode("hex")
-        return output
 
 
 class TimeStampField(FixedPointField):
@@ -94,7 +83,7 @@ class TimeStampField(FixedPointField):
         return time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime(val - _NTP_BASETIME))
 
     def any2i(self, pkt, val):
-        if isinstance(val, basestring):
+        if isinstance(val, six.string_types):
             val = int(time.mktime(time.strptime(val))) + _NTP_BASETIME
         elif isinstance(val, datetime.datetime):
             val = int(val.strftime("%s")) + _NTP_BASETIME
@@ -104,14 +93,6 @@ class TimeStampField(FixedPointField):
         if val is None:
             val = FixedPointField.any2i(self, pkt, time.time() + _NTP_BASETIME)
         return FixedPointField.i2m(self, pkt, val)
-
-
-def get_cls(name, fallback_cls=conf.raw_layer):
-    """
-    Returns class named "name" if it exists, fallback_cls otherwise.
-    """
-
-    return globals().get(name, fallback_cls)
 
 
 #############################################################################
@@ -183,42 +164,22 @@ _kiss_codes = {
 
 
 # Used by _ntp_dispatcher to instantiate the appropriate class
-_ntp_cls_by_mode = {
-    0: "NTPHeader",
-    1: "NTPHeader",
-    2: "NTPHeader",
-    3: "NTPHeader",
-    4: "NTPHeader",
-    5: "NTPHeader",
-    6: "NTPControl",
-    7: "NTPPrivate"
-}
-
-
 def _ntp_dispatcher(payload):
     """
     Returns the right class for a given NTP packet.
     """
-
-    cls = conf.raw_layer
-
     # By default, calling NTP() will build a NTP packet as defined in RFC 5905
     # (see the code of NTPHeader). Use NTPHeader for extension fields and MAC.
     if payload is None:
-        cls = get_cls("NTPHeader")
-
+        return NTPHeader
     else:
         length = len(payload)
         if length >= _NTP_PACKET_MIN_SIZE:
-            first_byte = struct.unpack("!B", payload[0])[0]
-
+            first_byte = orb(payload[0])
             # Extract NTP mode
-            mode_mask = 0x07
-            mode = first_byte & mode_mask
-
-            cls = get_cls(_ntp_cls_by_mode.get(mode))
-
-    return cls
+            mode = first_byte & 7
+            return {6: NTPControl, 7: NTPPrivate}.get(mode, NTPHeader)
+    return conf.raw_layer
 
 
 class NTP(Packet):
@@ -249,38 +210,18 @@ class NTP(Packet):
     # NTPHeader, NTPControl and NTPPrivate are NTP packets.
     # This might help, for example when reading a pcap file.
     def haslayer(self, cls):
-        ntp_classes = [
-            get_cls("NTPHeader"),
-            get_cls("NTPControl"),
-            get_cls("NTPPrivate")
-        ]
-        ret = 0
-        if cls == NTP:
-            # If cls is NTP (the parent class), check that the object is an
-            # instance of a NTP packet
-            for ntp_class in ntp_classes:
-                if isinstance(self, ntp_class):
-                    ret = 1
-                    break
-        elif cls in ntp_classes and isinstance(self, cls):
-            ret = 1
-        return ret
+        """Specific: NTPHeader().haslayer(NTP) should return True."""
+        if cls == "NTP":
+            if isinstance(self, NTP):
+                return True
+        elif issubtype(cls, NTP):
+            if isinstance(self, cls):
+                return True
+        return super(NTP, self).haslayer(cls)
 
-    def getlayer(self, cls, nb=1, _track=None):
-        ntp_classes = [
-            get_cls("NTPHeader"),
-            get_cls("NTPControl"),
-            get_cls("NTPPrivate")
-        ]
-        layer = None
-        if cls == NTP:
-            for ntp_class in ntp_classes:
-                if isinstance(self, ntp_class):
-                    layer = self
-                    break
-        else:
-            layer = Packet.getlayer(self, cls, nb, _track)
-        return layer
+    def getlayer(self, cls, nb=1, _track=None, _subclass=True, **flt):
+        return super(NTP, self).getlayer(cls, nb=nb, _track=_track,
+                                         _subclass=True, **flt)
 
     def mysummary(self):
         return self.sprintf("NTP v%ir,NTP.version%, %NTP.mode%")
@@ -318,7 +259,7 @@ class NTPAuthenticator(Packet):
     ]
 
     def extract_padding(self, s):
-        return "", s
+        return b"", s
 
 
 class NTPExtension(Packet):
@@ -364,7 +305,7 @@ class NTPExtension(Packet):
     fields_desc = [
         ShortField("type", 0),
         ShortField("len", 0),
-        PadField(PacketField("value", "", Packet), align=4, padwith="\x00")
+        PadField(PacketField("value", "", Packet), align=4, padwith=b"\x00")
     ]
 
 
@@ -671,7 +612,7 @@ class NTPStatusPacket(Packet):
     fields_desc = [ShortField("status", 0)]
 
     def extract_padding(self, s):
-        return "", s
+        return b"", s
 
 
 class NTPSystemStatusPacket(Packet):
@@ -689,7 +630,7 @@ class NTPSystemStatusPacket(Packet):
     ]
 
     def extract_padding(self, s):
-        return "", s
+        return b"", s
 
 
 class NTPPeerStatusPacket(Packet):
@@ -710,7 +651,7 @@ class NTPPeerStatusPacket(Packet):
     ]
 
     def extract_padding(self, s):
-        return "", s
+        return b"", s
 
 
 class NTPClockStatusPacket(Packet):
@@ -725,7 +666,7 @@ class NTPClockStatusPacket(Packet):
     ]
 
     def extract_padding(self, s):
-        return "", s
+        return b"", s
 
 
 class NTPErrorStatusPacket(Packet):
@@ -740,7 +681,7 @@ class NTPErrorStatusPacket(Packet):
     ]
 
     def extract_padding(self, s):
-        return "", s
+        return b"", s
 
 
 class NTPControlStatusField(PacketField):
@@ -761,7 +702,7 @@ class NTPControlStatusField(PacketField):
         ret = None
         association_id = struct.unpack("!H", m[2:4])[0]
 
-        if pkt.error == 1:
+        if pkt.err == 1:
             ret = NTPErrorStatusPacket(m)
 
         # op_code == CTL_OP_READSTAT
@@ -869,7 +810,7 @@ class NTPControl(NTP):
         BitField("version", 2, 3),
         BitField("mode", 6, 3),
         BitField("response", 0, 1),
-        BitField("error", 0, 1),
+        BitField("err", 0, 1),
         BitField("more", 0, 1),
         BitEnumField("op_code", 0, 5, _op_codes),
         ShortField("sequence", 0),
@@ -1382,9 +1323,9 @@ class NTPInfoIfStatsIPv4(Packet):
 
     name = "info_if_stats"
     fields_desc = [
-        PadField(IPField("unaddr", "0.0.0.0"), 16, padwith="\x00"),
-        PadField(IPField("unbcast", "0.0.0.0"), 16, padwith="\x00"),
-        PadField(IPField("unmask", "0.0.0.0"), 16, padwith="\x00"),
+        PadField(IPField("unaddr", "0.0.0.0"), 16, padwith=b"\x00"),
+        PadField(IPField("unbcast", "0.0.0.0"), 16, padwith=b"\x00"),
+        PadField(IPField("unmask", "0.0.0.0"), 16, padwith=b"\x00"),
         IntField("v6_flag", 0),
         StrFixedLenField("ifname", "", length=32),
         IntField("flags", 0),
@@ -1745,18 +1686,18 @@ class NTPPrivate(NTP):
     # monitoring, statistics gathering and configuration.  A mode 7
     # packet has the following format:
     #
-    #    0			  1		      2			  3
+    #    0                        1                   2                   3
     #    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
     #   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     #   |R|M| VN  | Mode|A|  Sequence   | Implementation|   Req Code    |
     #   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     #   |  Err  | Number of data items  |  MBZ  |   Size of data item   |
     #   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    #   |								|
+    #   |                                                               |
     #   |            Data (Minimum 0 octets, maximum 500 octets)        |
     #   |                                                               |
     #                            [...]                                  |
-    #   |			                                        |
+    #   |                                                               |
     #   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     #   |               Encryption Keyid (when A bit set)               |
     #   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -1770,59 +1711,59 @@ class NTPPrivate(NTP):
     #
     # Response Bit:  This packet is a response (if clear, packet is a request).
     #
-    # More Bit:	Set for all packets but the last in a response which
-    #      	requires more than one packet.
+    # More Bit: Set for all packets but the last in a response which
+    #           requires more than one packet.
     #
     # Version Number: 2 for current version
     #
-    # Mode:	Always 7
+    # Mode:     Always 7
     #
     # Authenticated bit: If set, this packet is authenticated.
     #
     # Sequence number: For a multipacket response, contains the sequence
-    #      	number of this packet.  0 is the first in the sequence,
-    #      	127 (or less) is the last.  The More Bit must be set in
-    #      	all packets but the last.
+    #           number of this packet.  0 is the first in the sequence,
+    #           127 (or less) is the last.  The More Bit must be set in
+    #           all packets but the last.
     #
     # Implementation number: The number of the implementation this request code
-    #      	is defined by.  An implementation number of zero is used
-    #      	for requst codes/data formats which all implementations
-    #      	agree on.  Implementation number 255 is reserved (for
-    #      	extensions, in case we run out).
+    #           is defined by.  An implementation number of zero is used
+    #           for request codes/data formats which all implementations
+    #           agree on.  Implementation number 255 is reserved (for
+    #           extensions, in case we run out).
     #
     # Request code: An implementation-specific code which specifies the
-    #      	operation to be (which has been) performed and/or the
-    #      	format and semantics of the data included in the packet.
+    #           operation to be (which has been) performed and/or the
+    #           format and semantics of the data included in the packet.
     #
-    # Err:	Must be 0 for a request.  For a response, holds an error
-    #      	code relating to the request.  If nonzero, the operation
-    #      	requested wasn"t performed.
+    # Err:      Must be 0 for a request.  For a response, holds an error
+    #           code relating to the request.  If nonzero, the operation
+    #           requested wasn"t performed.
     #
-    #      	0 - no error
-    #      	1 - incompatible implementation number
-    #      	2 - unimplemented request code
-    #      	3 - format error (wrong data items, data size, packet size etc.)
-    #      	4 - no data available (e.g. request for details on unknown peer)
-    #      	5-6 I don"t know
-    #      	7 - authentication failure (i.e. permission denied)
+    #           0 - no error
+    #           1 - incompatible implementation number
+    #           2 - unimplemented request code
+    #           3 - format error (wrong data items, data size, packet size etc.)
+    #           4 - no data available (e.g. request for details on unknown peer)
+    #           5-6 I don"t know
+    #           7 - authentication failure (i.e. permission denied)
     #
     # Number of data items: number of data items in packet.  0 to 500
     #
-    # MBZ:	A reserved data field, must be zero in requests and responses.
+    # MBZ:      A reserved data field, must be zero in requests and responses.
     #
     # Size of data item: size of each data item in packet.  0 to 500
     #
-    # Data:	Variable sized area containing request/response data.  For
-    #      	requests and responses the size in octets must be greater
-    #      	than or equal to the product of the number of data items
-    #      	and the size of a data item.  For requests the data area
-    #      	must be exactly 40 octets in length.  For responses the
-    #      	data area may be any length between 0 and 500 octets
-    #      	inclusive.
+    # Data:     Variable sized area containing request/response data.  For
+    #           requests and responses the size in octets must be greater
+    #           than or equal to the product of the number of data items
+    #           and the size of a data item.  For requests the data area
+    #           must be exactly 40 octets in length.  For responses the
+    #           data area may be any length between 0 and 500 octets
+    #           inclusive.
     #
     # Message Authentication Code: Same as NTP spec, in definition and function.
-    #      	May optionally be included in requests which require
-    #      	authentication, is never included in responses.
+    #           May optionally be included in requests which require
+    #           authentication, is never included in responses.
     #
     # The version number, mode and keyid have the same function and are
     # in the same location as a standard NTP packet.  The request packet

@@ -8,17 +8,15 @@ Starting Scapy
 Scapy's interactive shell is run in a terminal session. Root privileges are needed to
 send the packets, so we're using ``sudo`` here::
   
-    $ sudo scapy
-    Welcome to Scapy (2.0.1-dev)
+    $ sudo ./scapy
+    Welcome to Scapy (2.4.0)
     >>> 
 
 On Windows, please open a command prompt (``cmd.exe``) and make sure that you have 
 administrator privileges::
 
     C:\>scapy
-    INFO: No IPv6 support in kernel
-    WARNING: No route found for IPv6 destination :: (no default route?)
-    Welcome to Scapy (2.0.1-dev)
+    Welcome to Scapy (2.4.0)
     >>>
 
 If you do not have all optional packages installed, Scapy will inform you that 
@@ -28,6 +26,14 @@ some features will not be available::
     INFO: Can't import PyX. Won't be able to use psdump() or pdfdump().
 
 The basic features of sending and receiving packets should still work, though. 
+
+Screenshot
+----------
+
+If you have installed IPython, scapy will hook to it and you will be able to use auto-completion using the TAB.
+
+.. image:: graphics/scapy-main-console.png
+   :align: center
 
 
 Interactive tutorial
@@ -84,7 +90,7 @@ The ``/`` operator has been used as a composition operator between two layers. W
 
 Each packet can be build or dissected (note: in Python ``_`` (underscore) is the latest result)::
 
-    >>> str(IP())
+    >>> raw(IP())
     'E\x00\x00\x14\x00\x01\x00\x00@\x00|\xe7\x7f\x00\x00\x01\x7f\x00\x00\x01'
     >>> IP(_)
     <IP version=4L ihl=5L tos=0x0 len=20 id=1 flags= frag=0L ttl=64 proto=IP
@@ -97,7 +103,7 @@ Each packet can be build or dissected (note: in Python ``_`` (underscore) is the
     20 00 BB 39 00 00 47 45 54 20 2F 69 6E 64 65 78   ..9..GET /index
     2E 68 74 6D 6C 20 48 54 54 50 2F 31 2E 30 20 0A  .html HTTP/1.0 .
     0A                                               .
-    >>> b=str(a)
+    >>> b=raw(a)
     >>> b
     '\x00\x02\x157\xa2D\x00\xae\xf3R\xaa\xd1\x08\x00E\x00\x00C\x00\x01\x00\x00@\x06x<\xc0
      \xa8\x05\x15B#\xfa\x97\x00\x14\x00P\x00\x00\x00\x00\x00\x00\x00\x00P\x02 \x00
@@ -148,8 +154,8 @@ If you have PyX installed, you can make a graphical PostScript/PDF dump of a pac
 =======================   ====================================================
 Command                   Effect
 =======================   ====================================================
-str(pkt)                  assemble the packet 
-hexdump(pkt)              have an hexadecimal dump 
+raw(pkt)                  assemble the packet
+hexdump(pkt)              have a hexadecimal dump 
 ls(pkt)                   have the list of fields values 
 pkt.summary()             for a one-line summary 
 pkt.show()                for a developed view of the packet 
@@ -166,7 +172,7 @@ pkt.command()             return a Scapy command that can generate the packet
 Generating sets of packets
 --------------------------
 
-For the moment, we have only generated one packet. Let see how to specify sets of packets as easily. Each field of the whole packet (ever layers) can be a set. This implicitly define a set of packets, generated using a kind of cartesian product between all the fields.
+For the moment, we have only generated one packet. Let see how to specify sets of packets as easily. Each field of the whole packet (ever layers) can be a set. This implicitly defines a set of packets, generated using a kind of cartesian product between all the fields.
 
 ::
 
@@ -219,7 +225,7 @@ Sending packets
 .. index::
    single: Sending packets, send
    
-Now that we know how to manipulate packets. Let's see how to send them. The send() function will send packets at layer 3. That is to say it will handle routing and layer 2 for you. The sendp() function will work at layer 2. It's up to you to choose the right interface and the right link layer protocol. send() and sendp() will also return sent packet list if return_packets=True is passed as parameter.
+Now that we know how to manipulate packets. Let's see how to send them. The send() function will send packets at layer 3. That is to say, it will handle routing and layer 2 for you. The sendp() function will work at layer 2. It's up to you to choose the right interface and the right link layer protocol. send() and sendp() will also return sent packet list if return_packets=True is passed as parameter.
 
 ::
 
@@ -249,7 +255,7 @@ Fuzzing
 .. index::
    single: fuzz(), fuzzing
 
-The function fuzz() is able to change any default value that is not to be calculated (like checksums) by an object whose value is random and whose type is adapted to the field. This enables to quickly built fuzzing templates and send them in loop. In the following example, the IP layer is normal, and the UDP and NTP layers are fuzzed. The UDP checksum will be correct, the UDP destination port will be overloaded by NTP to be 123 and the NTP version will be forced to be 4. All the other ports will be randomized::
+The function fuzz() is able to change any default value that is not to be calculated (like checksums) by an object whose value is random and whose type is adapted to the field. This enables to quickly built fuzzing templates and send them in a loop. In the following example, the IP layer is normal, and the UDP and NTP layers are fuzzed. The UDP checksum will be correct, the UDP destination port will be overloaded by NTP to be 123 and the NTP version will be forced to be 4. All the other ports will be randomized. Note: If you use fuzz() in IP layer, src and dst parameter won't be random so in order to do that use RandIP().::
 
     >>> send(IP(dst="target")/fuzz(UDP()/NTP(version=4)),loop=1)
     ................^C
@@ -262,11 +268,11 @@ Send and receive packets (sr)
 .. index::
    single: sr()
 
-Now, let's try to do some fun things. The sr() function is for sending packets and receiving answers. The function returns a couple of packet and answers, and the unanswered packets. The function sr1() is a variant that only return one packet that answered the packet (or the packet set) sent. The packets must be layer 3 packets (IP, ARP, etc.). The function srp() do the same for layer 2 packets (Ethernet, 802.3, etc.).
+Now, let's try to do some fun things. The sr() function is for sending packets and receiving answers. The function returns a couple of packet and answers, and the unanswered packets. The function sr1() is a variant that only returns one packet that answered the packet (or the packet set) sent. The packets must be layer 3 packets (IP, ARP, etc.). The function srp() do the same for layer 2 packets (Ethernet, 802.3, etc.). If there is, no response a None value will be assigned instead when the timeout is reached.
 
 ::
 
-    >>> p=sr1(IP(dst="www.slashdot.org")/ICMP()/"XXXXXXXXXXX")
+    >>> p = sr1(IP(dst="www.slashdot.org")/ICMP()/"XXXXXXXXXXX")
     Begin emission:
     ...Finished to send 1 packets.
     .*
@@ -325,7 +331,7 @@ The "send'n'receive" functions family is the heart of scapy. They return a coupl
     >>> sr(IP(dst="192.168.8.1")/TCP(dport=[21,22,23]))
     Received 6 packets, got 3 answers, remaining 0 packets
     (<Results: UDP:0 TCP:3 ICMP:0 Other:0>, <Unanswered: UDP:0 TCP:0 ICMP:0 Other:0>)
-    >>> ans,unans=_
+    >>> ans, unans = _
     >>> ans.summary()
     IP / TCP 192.168.8.14:20 > 192.168.8.1:21 S ==> Ether / IP / TCP 192.168.8.1:21 > 192.168.8.14:20 RA / Padding
     IP / TCP 192.168.8.14:20 > 192.168.8.1:22 S ==> Ether / IP / TCP 192.168.8.1:22 > 192.168.8.14:20 RA / Padding
@@ -379,7 +385,7 @@ or
 
 In order to quickly review responses simply request a summary of collected packets::
 
-    >>> ans,unans = _
+    >>> ans, unans = _
     >>> ans.summary()
     IP / TCP 192.168.1.100:ftp-data > 192.168.1.1:440 S ======> IP / TCP 192.168.1.1:440 > 192.168.1.100:ftp-data RA / Padding
     IP / TCP 192.168.1.100:ftp-data > 192.168.1.1:441 S ======> IP / TCP 192.168.1.1:441 > 192.168.1.100:ftp-data RA / Padding
@@ -396,7 +402,7 @@ The above will display stimulus/response pairs for answered probes. We can displ
 
 Even better, a table can be built using the ``make_table()`` function to display information about multiple targets::
 
-    >>> ans,unans = sr(IP(dst=["192.168.1.1","yahoo.com","slashdot.org"])/TCP(dport=[22,80,443],flags="S"))
+    >>> ans, unans = sr(IP(dst=["192.168.1.1","yahoo.com","slashdot.org"])/TCP(dport=[22,80,443],flags="S"))
     Begin emission:
     .......*.**.......Finished to send 9 packets.
     **.*.*..*..................
@@ -449,7 +455,7 @@ TCP traceroute
 
 A TCP traceroute::
 
-    >>> ans,unans=sr(IP(dst=target, ttl=(4,25),id=RandShort())/TCP(flags=0x2))
+    >>> ans, unans = sr(IP(dst=target, ttl=(4,25),id=RandShort())/TCP(flags=0x2))
     *****.******.*.***..*.**Finished to send 22 packets.
     ***......
     Received 33 packets, got 21 answers, remaining 1 packets
@@ -502,6 +508,27 @@ Note that the TCP traceroute and some other high-level functions are already cod
     dyndns_add       : Send a DNS add message to a nameserver for "name" to have a new "rdata"
     dyndns_del       : Send a DNS delete message to a nameserver for "name"
     [...]
+
+Scapy may also use the GeoIP2 module, in combination with matplotlib and `cartopy <http://scitools.org.uk/cartopy/docs/latest/installing.html>`_ to generate fancy graphics such as below:
+
+.. image:: graphics/traceroute_worldplot.png
+
+In this example, we used the `traceroute_map()` function to print the graphic. This method is a shortcut which uses the `world_trace` of the `TracerouteResult` objects.
+It could have been done differently:
+
+    >>> conf.geoip_city = "path/to/GeoLite2-City.mmdb"
+    >>> a = traceroute("www.google.co.uk", verbose=0)[0]
+    >>> b = traceroute("www.secdev.org", verbose=0)[0]
+    >>> a.res += b.res
+    >>> a.world_trace()
+
+or such as above:
+
+    >>> conf.geoip_city = "path/to/GeoLite2-City.mmdb"
+    >>> traceroute_map("www.google.co.uk", "www.secdev.org")
+
+To use those functions, it is required to have installed the `geoip2 <https://pypi.python.org/pypi/geoip2>`_ module, `its database <https://dev.maxmind.com/geoip/geoip2/geolite2/>`_ (`direct download <https://geolite.maxmind.com/download/geoip/database/GeoLite2-City.tar.gz>`_)
+but also the `cartopy <http://scitools.org.uk/cartopy/docs/latest/installing.html>`_ module.
 
 Configuring super sockets
 -------------------------
@@ -760,10 +787,10 @@ Hexdump above can be reimported back into Scapy using ``import_hexcap()``::
     \x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e
     \x1f !"#$%&\'()*+,-./01234567' |>>>>
 
-Hex string
-^^^^^^^^^^
+Binary string
+^^^^^^^^^^^^^
 
-You can also convert entire packet into a hex string using the ``str()`` function::
+You can also convert entire packet into a binary string using the ``raw()`` function::
 
     >>> pkts = sniff(count = 1)
     >>> pkt = pkts[0]
@@ -774,16 +801,16 @@ You can also convert entire packet into a hex string using the ``str()`` functio
     chksum=0x9c90 id=0x5a61 seq=0x1 |<Raw  load='\xe6\xdapI\xb6\xe5\x08\x00\x08\t\n
     \x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e
     \x1f !"#$%&\'()*+,-./01234567' |>>>>
-    >>> pkt_str = str(pkt)
-    >>> pkt_str
+    >>> pkt_raw = raw(pkt)
+    >>> pkt_raw
     '\x00PV\xfc\xceP\x00\x0c)+S\x19\x08\x00E\x00\x00T\x00\x00@\x00@\x01Z|\xc0\xa8
     \x19\x82\x04\x02\x02\x01\x08\x00\x9c\x90Za\x00\x01\xe6\xdapI\xb6\xe5\x08\x00
     \x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b
     \x1c\x1d\x1e\x1f !"#$%&\'()*+,-./01234567'
 
-We can reimport the produced hex string by selecting the appropriate starting layer (e.g. ``Ether()``).
+We can reimport the produced binary string by selecting the appropriate first layer (e.g. ``Ether()``).
 
-    >>> new_pkt = Ether(pkt_str)
+    >>> new_pkt = Ether(pkt_raw)
     >>> new_pkt
     <Ether  dst=00:50:56:fc:ce:50 src=00:0c:29:2b:53:19 type=0x800 |<IP  version=4L 
     ihl=5L tos=0x0 len=84 id=0 flags=DF frag=0L ttl=64 proto=icmp chksum=0x5a7c 
@@ -833,7 +860,7 @@ Sessions
 At last Scapy is capable of saving all session variables using the ``save_session()`` function:
 
 >>> dir()
-['__builtins__', 'conf', 'new_pkt', 'pkt', 'pkt_export', 'pkt_hex', 'pkt_str', 'pkts']
+['__builtins__', 'conf', 'new_pkt', 'pkt', 'pkt_export', 'pkt_hex', 'pkt_raw', 'pkts']
 >>> save_session("session.scapy")
 
 Next time you start Scapy you can load the previous saved session using the ``load_session()`` command::
@@ -842,7 +869,7 @@ Next time you start Scapy you can load the previous saved session using the ``lo
     ['__builtins__', 'conf']
     >>> load_session("session.scapy")
     >>> dir()
-    ['__builtins__', 'conf', 'new_pkt', 'pkt', 'pkt_export', 'pkt_hex', 'pkt_str', 'pkts']
+    ['__builtins__', 'conf', 'new_pkt', 'pkt', 'pkt_export', 'pkt_hex', 'pkt_raw', 'pkts']
 
 
 Making tables
@@ -855,7 +882,7 @@ Now we have a demonstration of the ``make_table()`` presentation function. It ta
 
 Here we can see a multi-parallel traceroute (scapy already has a multi TCP traceroute function. See later)::
 
-    >>> ans,unans=sr(IP(dst="www.test.fr/30", ttl=(1,6))/TCP())
+    >>> ans, unans = sr(IP(dst="www.test.fr/30", ttl=(1,6))/TCP())
     Received 49 packets, got 24 answers, remaining 0 packets
     >>> ans.make_table( lambda (s,r): (s.dst, s.ttl, r.src) )
       216.15.189.192  216.15.189.193  216.15.189.194  216.15.189.195  
@@ -870,7 +897,7 @@ Here is a more complex example to identify machines from their IPID field. We ca
 
 ::
 
-    >>> ans,unans=sr(IP(dst="172.20.80.192/28")/TCP(dport=[20,21,22,25,53,80]))
+    >>> ans, unans = sr(IP(dst="172.20.80.192/28")/TCP(dport=[20,21,22,25,53,80]))
     Received 142 packets, got 25 answers, remaining 71 packets
     >>> ans.make_table(lambda (s,r): (s.dst, s.dport, r.sprintf("%IP.id%")))
        172.20.80.196 172.20.80.197 172.20.80.198 172.20.80.200 172.20.80.201 
@@ -921,7 +948,7 @@ Gnuplot
 We can easily plot some harvested values using Gnuplot. (Make sure that you have Gnuplot-py and Gnuplot installed.)
 For example, we can observe the IP ID patterns to know how many distinct IP stacks are used behind a load balancer::
 
-    >>> a,b=sr(IP(dst="www.target.com")/TCP(sport=[RandShort()]*1000))
+    >>> a, b = sr(IP(dst="www.target.com")/TCP(sport=[RandShort()]*1000))
     >>> a.plot(lambda x:x[1].id)
     <Gnuplot._Gnuplot.Gnuplot instance at 0xb7d6a74c>
 
@@ -961,9 +988,9 @@ Scapy also has a powerful TCP traceroute function. Unlike other traceroute progr
     20 193.45.10.88    SA 216.109.118.79  SA 64.241.242.243  SA 66.94.229.254   SA 
     (<Traceroute: UDP:0 TCP:28 ICMP:52 Other:0>, <Unanswered: UDP:0 TCP:0 ICMP:0 Other:0>)
 
-The last line is in fact a the result of the function : a traceroute result object and a packet list of unanswered packets. The traceroute result is a more specialised version (a subclass, in fact) of a classic result object. We can save it to consult the traceroute result again a bit later, or to deeply inspect one of the answers, for example to check padding.
+The last line is in fact the result of the function : a traceroute result object and a packet list of unanswered packets. The traceroute result is a more specialised version (a subclass, in fact) of a classic result object. We can save it to consult the traceroute result again a bit later, or to deeply inspect one of the answers, for example to check padding.
 
-    >>> result,unans=_
+    >>> result, unans = _
     >>> result.show()
        193.45.10.88:80    216.109.118.79:80  64.241.242.243:80  66.94.229.254:80   
     1  192.168.8.1        192.168.8.1        192.168.8.1        192.168.8.1        
@@ -974,7 +1001,7 @@ The last line is in fact a the result of the function : a traceroute result obje
 
 Like any result object, traceroute objects can be added :
 
-    >>> r2,unans=traceroute(["www.voila.com"],maxttl=20)
+    >>> r2, unans = traceroute(["www.voila.com"],maxttl=20)
     Received 19 packets, got 19 answers, remaining 1 packets
        195.101.94.25:80   
     1  192.168.8.1        
@@ -1023,7 +1050,7 @@ Like any result object, traceroute objects can be added :
 
 Traceroute result object also have a very neat feature: they can make a directed graph from all the routes they got, and cluster them by AS. You will need graphviz. By default, ImageMagick is used to display the graph.
 
-    >>> res,unans = traceroute(["www.microsoft.com","www.cisco.com","www.yahoo.com","www.wanadoo.fr","www.pacsec.com"],dport=[80,443],maxttl=20,retry=-2)
+    >>> res, unans = traceroute(["www.microsoft.com","www.cisco.com","www.yahoo.com","www.wanadoo.fr","www.pacsec.com"],dport=[80,443],maxttl=20,retry=-2)
     Received 190 packets, got 190 answers, remaining 10 packets
        193.252.122.103:443 193.252.122.103:80 198.133.219.25:443 198.133.219.25:80  207.46...
     1  192.168.8.1         192.168.8.1        192.168.8.1        192.168.8.1        192.16...
@@ -1057,6 +1084,11 @@ Provided that your wireless card and driver are correctly configured for frame i
     $ iw dev wlan0 interface add mon0 type monitor
     $ ifconfig mon0 up
 
+On Windows, if using Npcap, the equivalent would be to call
+
+    # Of course, conf.iface can be replaced by any interfaces accessed through IFACES
+    >>> conf.iface.setmonitor(True)
+
 you can have a kind of FakeAP::
 
     >>> sendp(RadioTap()/
@@ -1083,18 +1115,18 @@ ACK Scan
 Using Scapy's powerful packet crafting facilities we can quick replicate classic TCP Scans.
 For example, the following string will be sent to simulate an ACK Scan::
 
-    >>> ans,unans = sr(IP(dst="www.slashdot.org")/TCP(dport=[80,666],flags="A"))
+    >>> ans, unans = sr(IP(dst="www.slashdot.org")/TCP(dport=[80,666],flags="A"))
 
 We can find unfiltered ports in answered packets::
 
     >>> for s,r in ans:
     ...     if s[TCP].dport == r[TCP].sport:
-    ...        print str(s[TCP].dport) + " is unfiltered"
+    ...        print("%d is unfiltered" % s[TCP].dport)
 
 Similarly, filtered ports can be found with unanswered packets::
 
     >>> for s in unans:     
-    ...     print str(s[TCP].dport) + " is filtered"
+    ...     print("%d is filtered" % s[TCP].dport)
 
 
 Xmas Scan
@@ -1102,7 +1134,7 @@ Xmas Scan
 
 Xmas Scan can be launched using the following command::
 
-    >>> ans,unans = sr(IP(dst="192.168.1.1")/TCP(dport=666,flags="FPU") )
+    >>> ans, unans = sr(IP(dst="192.168.1.1")/TCP(dport=666,flags="FPU") )
 
 Checking RST responses will reveal closed ports on the target. 
 
@@ -1111,7 +1143,7 @@ IP Scan
 
 A lower level IP Scan can be used to enumerate supported protocols::
 
-    >>> ans,unans=sr(IP(dst="192.168.1.1",proto=(0,255))/"SCAPY",retry=2)
+    >>> ans, unans = sr(IP(dst="192.168.1.1",proto=(0,255))/"SCAPY",retry=2)
 
 
 ARP Ping
@@ -1119,7 +1151,7 @@ ARP Ping
 
 The fastest way to discover hosts on a local ethernet network is to use the ARP Ping method::
 
-    >>> ans,unans=srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst="192.168.1.0/24"),timeout=2)
+    >>> ans, unans = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst="192.168.1.0/24"),timeout=2)
 
 Answers can be reviewed with the following command::
 
@@ -1135,7 +1167,7 @@ ICMP Ping
 
 Classical ICMP Ping can be emulated using the following command::
 
-    >>> ans,unans=sr(IP(dst="192.168.1.1-254")/ICMP())
+    >>> ans, unans = sr(IP(dst="192.168.1.1-254")/ICMP())
 
 Information on live hosts can be collected with the following request::
 
@@ -1147,7 +1179,7 @@ TCP Ping
 
 In cases where ICMP echo requests are blocked, we can still use various TCP Pings such as TCP SYN Ping below::
 
-    >>> ans,unans=sr( IP(dst="192.168.1.*")/TCP(dport=80,flags="S") )
+    >>> ans, unans = sr( IP(dst="192.168.1.*")/TCP(dport=80,flags="S") )
 
 Any response to our probes will indicate a live host. We can collect results with the following command::
 
@@ -1159,7 +1191,7 @@ UDP Ping
 
 If all else fails there is always UDP Ping which will produce ICMP Port unreachable errors from live hosts. Here you can pick any port which is most likely to be closed, such as port 0::
 
-    >>> ans,unans=sr( IP(dst="192.168.*.1-10")/UDP(dport=0) )
+    >>> ans, unans = sr( IP(dst="192.168.*.1-10")/UDP(dport=0) )
 
 Once again, results can be collected with this command:
 
@@ -1209,7 +1241,7 @@ TCP Port Scanning
  
 Send a TCP SYN on each port. Wait for a SYN-ACK or a RST or an ICMP error:: 
 
-    >>> res,unans = sr( IP(dst="target") 
+    >>> res, unans = sr( IP(dst="target") 
                     /TCP(flags="S", dport=(1,1024)) ) 
 
 Possible result visualization: open ports
@@ -1225,7 +1257,7 @@ IKE Scanning
 We try to identify VPN concentrators by sending ISAKMP Security Association proposals
 and receiving the answers::
 
-    >>> res,unans = sr( IP(dst="192.168.1.*")/UDP()
+    >>> res, unans = sr( IP(dst="192.168.1.*")/UDP()
                     /ISAKMP(init_cookie=RandString(8), exch_type="identity prot.") 
                     /ISAKMP_payload_SA(prop=ISAKMP_payload_Proposal()) 
                   ) 
@@ -1244,7 +1276,7 @@ TCP SYN traceroute
 
 ::
 
-    >>> ans,unans=sr(IP(dst="4.2.2.1",ttl=(1,10))/TCP(dport=53,flags="S"))
+    >>> ans, unans = sr(IP(dst="4.2.2.1",ttl=(1,10))/TCP(dport=53,flags="S"))
 
 Results would be::
 
@@ -1265,7 +1297,7 @@ Tracerouting an UDP application like we do with TCP is not
 reliable, because there's no handshake. We need to give an applicative payload (DNS, ISAKMP, 
 NTP, etc.) to deserve an answer::
 
-    >>> res,unans = sr(IP(dst="target", ttl=(1,20))
+    >>> res, unans = sr(IP(dst="target", ttl=(1,20))
                   /UDP()/DNS(qd=DNSQR(qname="test.com")) 
 
 We can visualize the results as a list of routers::
@@ -1278,7 +1310,7 @@ DNS traceroute
 
 We can perform a DNS traceroute by specifying a complete packet in ``l4`` parameter of ``traceroute()`` function::
 
-    >>> ans,unans=traceroute("4.2.2.1",l4=UDP(sport=RandShort())/DNS(qd=DNSQR(qname="thesprawl.org")))
+    >>> ans, unans = traceroute("4.2.2.1",l4=UDP(sport=RandShort())/DNS(qd=DNSQR(qname="thesprawl.org")))
     Begin emission:
     ..*....******...******.***...****Finished to send 30 packets.
     *****...***...............................
@@ -1329,7 +1361,7 @@ Wireless sniffing
 
 The following command will display information similar to most wireless sniffers::
 
->>> sniff(iface="ath0",prn=lambda x:x.sprintf("{Dot11Beacon:%Dot11.addr3%\t%Dot11Beacon.info%\t%PrismHeader.channel%\tDot11Beacon.cap%}"))
+>>> sniff(iface="ath0",prn=lambda x:x.sprintf("{Dot11Beacon:%Dot11.addr3%\t%Dot11Beacon.info%\t%PrismHeader.channel%\t%Dot11Beacon.cap%}"))
 
 The above command will produce output similar to the one below::
 
@@ -1345,7 +1377,7 @@ Recipes
 Simplistic ARP Monitor
 ----------------------
 
-This program uses the ``sniff()`` callback (paramter prn). The store parameter is set to 0 so that the ``sniff()`` function will not store anything (as it would do otherwise) and thus can run forever. The filter parameter is used for better performances on high load : the filter is applied inside the kernel and Scapy will only see ARP traffic.
+This program uses the ``sniff()`` callback (parameter prn). The store parameter is set to 0 so that the ``sniff()`` function will not store anything (as it would do otherwise) and thus can run forever. The filter parameter is used for better performances on high load : the filter is applied inside the kernel and Scapy will only see ARP traffic.
 
 ::
 
@@ -1386,7 +1418,7 @@ Use Scapy to send a DHCP discover request and analyze the replies::
 
 In this case we got 2 replies, so there were two active DHCP servers on the test network::
 
-    >>> ans.summarize()
+    >>> ans.summary()
     Ether / IP / UDP 0.0.0.0:bootpc > 255.255.255.255:bootps / BOOTP / DHCP ==> Ether / IP / UDP 192.168.1.1:bootps > 255.255.255.255:bootpc / BOOTP / DHCP
     Ether / IP / UDP 0.0.0.0:bootpc > 255.255.255.255:bootps / BOOTP / DHCP ==> Ether / IP / UDP 192.168.1.11:bootps > 255.255.255.255:bootpc / BOOTP / DHCP
     }}}
@@ -1487,14 +1519,14 @@ ISN
 
 Scapy can be used to analyze ISN (Initial Sequence Number) increments to possibly discover vulnerable systems. First we will collect target responses by sending a number of SYN probes in a loop::
 
-    >>> ans,unans=srloop(IP(dst="192.168.1.1")/TCP(dport=80,flags="S"))
+    >>> ans, unans = srloop(IP(dst="192.168.1.1")/TCP(dport=80,flags="S"))
 
 Once we obtain a reasonable number of responses we can start analyzing collected data with something like this:
 
     >>> temp = 0
-    >>> for s,r in ans:
+    >>> for s, r in ans:
     ...    temp = r[TCP].seq - temp
-    ...    print str(r[TCP].seq) + "\t+" + str(temp)
+    ...    print("%d\t+%d" % (r[TCP].seq, temp))
     ... 
     4278709328      +4275758673
     4279655607      +3896934

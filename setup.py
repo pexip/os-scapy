@@ -33,7 +33,7 @@ def make_ezipfile(base_name, base_dir, verbose=0, dry_run=0, **kwargs):
     os.system("zip -A '%s'" % fname)
     of.close()
     os.unlink(ofname)
-    os.chmod(fname, 0755)
+    os.chmod(fname, 0o755)
     return fname
 
 
@@ -51,12 +51,14 @@ setup(
     packages=[
         'scapy',
         'scapy/arch',
+        'scapy/arch/bpf',
         'scapy/arch/windows',
         'scapy/contrib',
         'scapy/layers',
         'scapy/layers/tls',
         'scapy/layers/tls/crypto',
         'scapy/modules',
+        'scapy/modules/krack',
         'scapy/asn1',
         'scapy/tools',
     ],
@@ -69,6 +71,7 @@ setup(
     # Metadata
     author='Philippe BIONDI',
     author_email='phil(at)secdev.org',
+    maintainer='Pierre LALET, Guillaume VALADON',
     description='Scapy: interactive packet manipulation tool',
     license='GPLv2',
     url='http://www.secdev.org/projects/scapy',
@@ -84,9 +87,12 @@ setup(
         "Intended Audience :: Telecommunications Industry",
         "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
         "Programming Language :: Python :: 2",
-        "Programming Language :: Python :: 2.5",
-        "Programming Language :: Python :: 2.6",
         "Programming Language :: Python :: 2.7",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.3",
+        "Programming Language :: Python :: 3.4",
+        "Programming Language :: Python :: 3.5",
+        "Programming Language :: Python :: 3.6",
         "Topic :: Security",
         "Topic :: System :: Networking",
         "Topic :: System :: Networking :: Monitoring",

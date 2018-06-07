@@ -7,45 +7,25 @@
 Operating system specific functionality.
 """
 
+from __future__ import absolute_import
 import socket
 
-from scapy.arch.consts import LINUX, OPENBSD, FREEBSD, NETBSD, DARWIN, \
-    SOLARIS, WINDOWS, BSD, X86_64, ARM_64, LOOPBACK_NAME
+from scapy.consts import LINUX, OPENBSD, FREEBSD, NETBSD, DARWIN, \
+    SOLARIS, WINDOWS, BSD, IS_64BITS, LOOPBACK_NAME
 from scapy.error import *
 import scapy.config
-from scapy.pton_ntop import inet_pton
-
-try:
-    from matplotlib import get_backend as matplotlib_get_backend
-    import matplotlib.pyplot as plt
-    MATPLOTLIB = 1
-    if "inline" in matplotlib_get_backend():
-        MATPLOTLIB_INLINED = 1
-    else:
-        MATPLOTLIB_INLINED = 0
-    MATPLOTLIB_DEFAULT_PLOT_KARGS = {"marker": "+"}
-# RuntimeError to catch gtk "Cannot open display" error
-except (ImportError, RuntimeError):
-    plt = None
-    MATPLOTLIB = 0
-    MATPLOTLIB_INLINED = 0
-    MATPLOTLIB_DEFAULT_PLOT_KARGS = dict()
-    log_loading.info("Can't import matplotlib. Won't be able to plot.")
-
-try:
-    import pyx
-    PYX=1
-except ImportError:
-    log_loading.info("Can't import PyX. Won't be able to use psdump() or pdfdump().")
-    PYX=0
-
+from scapy.pton_ntop import inet_pton, inet_ntop
+from scapy.data import *
 
 def str2mac(s):
-    return ("%02x:"*6)[:-1] % tuple(map(ord, s)) 
+    return ("%02x:"*6)[:-1] % tuple(orb(x) for x in s)
 
+if not WINDOWS:
+    if not scapy.config.conf.use_pcap and not scapy.config.conf.use_dnet:
+        from scapy.arch.bpf.core import get_if_raw_addr
 
 def get_if_addr(iff):
-    return socket.inet_ntoa(get_if_raw_addr(iff))
+    return inet_ntop(socket.AF_INET, get_if_raw_addr(iff))
     
 def get_if_hwaddr(iff):
     addrfamily, mac = get_if_raw_hwaddr(iff)
@@ -63,10 +43,9 @@ def get_if_hwaddr(iff):
 # def attach_filter(s, filter, iface):
 # def set_promisc(s,iff,val=1):
 # def read_routes():
+# def read_routes6():
 # def get_if(iff,cmd):
 # def get_if_index(iff):
-
-
 
 if LINUX:
     from scapy.arch.linux import *
@@ -74,17 +53,23 @@ if LINUX:
         from scapy.arch.pcapdnet import *
 elif BSD:
     from scapy.arch.unix import read_routes, read_routes6, in6_getifaddr
-    scapy.config.conf.use_pcap = True
-    scapy.config.conf.use_dnet = True
-    from scapy.arch.pcapdnet import *
+
+    if scapy.config.conf.use_pcap or scapy.config.conf.use_dnet:
+        from scapy.arch.pcapdnet import *
+    else:
+        from scapy.arch.bpf.supersocket import L2bpfListenSocket, L2bpfSocket, L3bpfSocket
+        from scapy.arch.bpf.core import *
+        scapy.config.conf.use_bpf = True
+        scapy.config.conf.L2listen = L2bpfListenSocket
+        scapy.config.conf.L2socket = L2bpfSocket
+        scapy.config.conf.L3socket = L3bpfSocket
 elif SOLARIS:
     from scapy.arch.solaris import *
 elif WINDOWS:
     from scapy.arch.windows import *
-    from scapy.arch.windows.compatibility import *
 
 if scapy.config.conf.iface is None:
-    scapy.config.conf.iface = LOOPBACK_NAME
+    scapy.config.conf.iface = scapy.consts.LOOPBACK_INTERFACE
 
 
 def get_if_addr6(iff):
@@ -93,11 +78,8 @@ def get_if_addr6(iff):
     interface, in human readable form. If no global address is found,
     None is returned. 
     """
-    for x in in6_getifaddr():
-        if x[2] == iff and x[1] == IPV6_ADDR_GLOBAL:
-            return x[0]
-        
-    return None
+    return next((x[0] for x in in6_getifaddr()
+                 if x[2] == iff and x[1] == IPV6_ADDR_GLOBAL), None)
 
 def get_if_raw_addr6(iff):
     """

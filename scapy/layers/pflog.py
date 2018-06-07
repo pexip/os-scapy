@@ -7,6 +7,7 @@
 PFLog: OpenBSD PF packet filter logging.
 """
 
+from scapy.data import DLT_PFLOG
 from scapy.packet import *
 from scapy.fields import *
 from scapy.layers.inet import IP
@@ -48,7 +49,7 @@ class PFLog(Packet):
                     IntField("rulepid", 0),
                     ByteEnumField("direction", 255, {0: "inout", 1: "in",
                                                      2:"out", 255: "unknown"}),
-                    StrFixedLenField("pad", "\x00\x00\x00", 3 ) ]
+                    StrFixedLenField("pad", b"\x00\x00\x00", 3 ) ]
     def mysummary(self):
         return self.sprintf("%PFLog.addrfamily% %PFLog.action% on %PFLog.iface% by rule %PFLog.rulenumber%")
 
@@ -56,4 +57,4 @@ bind_layers(PFLog, IP, addrfamily=socket.AF_INET)
 if conf.ipv6_enabled:
     bind_layers(PFLog, IPv6, addrfamily=socket.AF_INET6)
 
-conf.l2types.register(117, PFLog)
+conf.l2types.register(DLT_PFLOG, PFLog)

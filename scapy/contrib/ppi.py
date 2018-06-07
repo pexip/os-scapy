@@ -1,7 +1,18 @@
-## This file is (hopefully) part of Scapy
-## See http://www.secdev.org/projects/scapy for more informations
-## <jellch@harris.com>
-## This program is published under a GPLv2 license
+# This file is part of Scapy
+# Scapy is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# any later version.
+#
+# Scapy is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Scapy. If not, see <http://www.gnu.org/licenses/>.
+
+# author: <jellch@harris.com>
 
 # scapy.contrib.description = PPI
 # scapy.contrib.status = loads
@@ -10,8 +21,12 @@
 """
 PPI (Per-Packet Information).
 """
-import logging,struct
+import logging
+import struct
+
+
 from scapy.config import conf
+from scapy.data import DLT_EN10MB, DLT_IEEE802_11, DLT_PPI
 from scapy.packet import *
 from scapy.fields import *
 from scapy.layers.l2 import Ether
@@ -33,7 +48,7 @@ class PPIGenericFldHdr(Packet):
                     StrLenField("value", "", length_from=lambda p:p.pfh_length) ]
 
     def extract_padding(self, p):
-        return "",p
+        return b"",p
 
 def _PPIGuessPayloadClass(p, **kargs):
     """ This function tells the PacketListField how it should extract the
@@ -52,11 +67,13 @@ def _PPIGuessPayloadClass(p, **kargs):
         out = cls(p[:pfh_len], **kargs)
         if (out.payload):
             out.payload = conf.raw_layer(out.payload.load)
+            out.payload.underlayer = out
             if (len(p) > pfh_len):
                 out.payload.payload = conf.padding_layer(p[pfh_len:])
+                out.payload.payload.underlayer = out.payload
         elif (len(p) > pfh_len):
             out.payload = conf.padding_layer(p[pfh_len:])
-        
+            out.payload.underlayer = out
     else:
         out = conf.raw_layer(p, **kargs)
     return out
@@ -77,10 +94,7 @@ class PPI(Packet):
 #Register PPI
 addPPIType("default", PPIGenericFldHdr)
 
-conf.l2types.register(192, PPI)
-conf.l2types.register_num2layer(192, PPI)
+conf.l2types.register(DLT_PPI, PPI)
 
-bind_layers(PPI, Dot11, dlt=conf.l2types.get(Dot11))
-bind_layers(Dot11, PPI)
-bind_layers(PPI, Ether, dlt=conf.l2types.get(Ether))
-bind_layers(Dot11, Ether)
+bind_layers(PPI, Dot11, dlt=DLT_IEEE802_11)
+bind_layers(PPI, Ether, dlt=DLT_EN10MB)

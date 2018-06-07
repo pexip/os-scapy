@@ -1,64 +1,231 @@
 ## This file is part of Scapy
 ## See http://www.secdev.org/projects/scapy for more informations
 ## Copyright (C) Philippe Biondi <phil@secdev.org>
+## Copyright (C) Gabriel Potter <gabriel@potter.fr>
 ## This program is published under a GPLv2 license
 
 """
 Automata with states, transitions and actions.
 """
 
-from __future__ import with_statement
+from __future__ import absolute_import
 import types,itertools,time,os,sys,socket,traceback
 from select import select
 from collections import deque
-import thread
+import threading
 from scapy.config import conf
 from scapy.utils import do_graph
 from scapy.error import log_interactive
 from scapy.plist import PacketList
 from scapy.data import MTU
 from scapy.supersocket import SuperSocket
+from scapy.consts import WINDOWS
+from scapy.compat import *
+import scapy.modules.six as six
 
-class ObjectPipe:
+if WINDOWS:
+    from scapy.error import Scapy_Exception
+    recv_error = Scapy_Exception
+else:
+    recv_error = ()
+
+""" In Windows, select.select is not available for custom objects. Here's the implementation of scapy to re-create this functionnality
+# Passive way: using no-ressources locks
+               +---------+             +---------------+      +-------------------------+
+               |  Start  +------------->Select_objects +----->+Linux: call select.select|
+               +---------+             |(select.select)|      +-------------------------+
+                                       +-------+-------+
+                                               |
+                                          +----v----+               +--------+
+                                          | Windows |               |Time Out+----------------------------------+
+                                          +----+----+               +----+---+                                  |
+                                               |                         ^                                      |
+      Event                                    |                         |                                      |
+        +                                      |                         |                                      |
+        |                              +-------v-------+                 |                                      |
+        |                       +------+Selectable Sel.+-----+-----------------+-----------+                    |
+        |                       |      +-------+-------+     |           |     |           v              +-----v-----+
++-------v----------+            |              |             |           |     |        Passive lock<-----+release_all<------+
+|Data added to list|       +----v-----+  +-----v-----+  +----v-----+     v     v            +             +-----------+      |
++--------+---------+       |Selectable|  |Selectable |  |Selectable|   ............         |                                |
+         |                 +----+-----+  +-----------+  +----------+                        |                                |
+         |                      v                                                           |                                |
+         v                 +----+------+   +------------------+               +-------------v-------------------+            |
+   +-----+------+          |wait_return+-->+  check_recv:     |               |                                 |            |
+   |call_release|          +----+------+   |If data is in list|               |  END state: selectable returned |        +---+--------+
+   +-----+--------              v          +-------+----------+               |                                 |        | exit door  |
+         |                    else                 |                          +---------------------------------+        +---+--------+
+         |                      +                  |                                                                         |
+         |                 +----v-------+          |                                                                         |
+         +--------->free -->Passive lock|          |                                                                         |
+                           +----+-------+          |                                                                         |
+                                |                  |                                                                         |
+                                |                  v                                                                         |
+                                +------------------Selectable-Selector-is-advertised-that-the-selectable-is-readable---------+
+"""
+
+class SelectableObject:
+    """DEV: to implement one of those, you need to add 2 things to your object:
+    - add "check_recv" function
+    - call "self.call_release" once you are ready to be read
+
+    You can set the __selectable_force_select__ to True in the class, if you want to
+    force the handler to use fileno(). This may only be useable on sockets created using
+    the builtin socket API."""
+    __selectable_force_select__ = False
+    def check_recv(self):
+        """DEV: will be called only once (at beginning) to check if the object is ready."""
+        raise OSError("This method must be overwriten.")
+
+    def _wait_non_ressources(self, callback):
+        """This get started as a thread, and waits for the data lock to be freed then advertise itself to the SelectableSelector using the callback"""
+        self.trigger = threading.Lock()
+        self.was_ended = False
+        self.trigger.acquire()
+        self.trigger.acquire()
+        if not self.was_ended:
+            callback(self)
+
+    def wait_return(self, callback):
+        """Entry point of SelectableObject: register the callback"""
+        if self.check_recv():
+            return callback(self)
+        _t = threading.Thread(target=self._wait_non_ressources, args=(callback,))
+        _t.setDaemon(True)
+        _t.start()
+        
+    def call_release(self, arborted=False):
+        """DEV: Must be call when the object becomes ready to read.
+           Relesases the lock of _wait_non_ressources"""
+        self.was_ended = arborted
+        try:
+            self.trigger.release()
+        except (threading.ThreadError, AttributeError):
+            pass
+
+class SelectableSelector(object):
+    """
+    Select SelectableObject objects.
+    
+    inputs: objects to process
+    remain: timeout. If 0, return [].
+    customTypes: types of the objects that have the check_recv function.
+    """
+    def _release_all(self):
+        """Releases all locks to kill all threads"""
+        for i in self.inputs:
+            i.call_release(True)
+        self.available_lock.release()
+
+    def _timeout_thread(self, remain):
+        """Timeout before releasing every thing, if nothing was returned"""
+        time.sleep(remain)
+        if not self._ended:
+            self._ended = True
+            self._release_all()
+
+    def _exit_door(self, _input):
+        """This function is passed to each SelectableObject as a callback
+        The SelectableObjects have to call it once there are ready"""
+        self.results.append(_input)
+        if self._ended:
+            return
+        self._ended = True
+        self._release_all()
+    
+    def __init__(self, inputs, remain):
+        self.results = []
+        self.inputs = list(inputs)
+        self.remain = remain
+        self.available_lock = threading.Lock()
+        self.available_lock.acquire()
+        self._ended = False
+
+    def process(self):
+        """Entry point of SelectableSelector"""
+        if WINDOWS:
+            select_inputs = []
+            for i in self.inputs:
+                if not isinstance(i, SelectableObject):
+                    warning("Unknown ignored object type: %s", type(i))
+                elif i.__selectable_force_select__:
+                    # Then use select.select
+                    select_inputs.append(i)
+                elif not self.remain and i.check_recv():
+                    self.results.append(i)
+                else:
+                    i.wait_return(self._exit_door)
+            if select_inputs:
+                # Use default select function
+                self.results.extend(select(select_inputs, [], [], self.remain)[0])
+            if not self.remain:
+                return self.results
+
+            threading.Thread(target=self._timeout_thread, args=(self.remain,)).start()
+            if not self._ended:
+                self.available_lock.acquire()
+            return self.results
+        else:
+            r,_,_ = select(self.inputs,[],[],self.remain)
+            return r
+
+def select_objects(inputs, remain):
+    """
+    Select SelectableObject objects. Same than:
+        select.select([inputs], [], [], remain)
+    But also works on Windows, only on SelectableObject.
+    
+    inputs: objects to process
+    remain: timeout. If 0, return [].
+    """
+    handler = SelectableSelector(inputs, remain)
+    return handler.process()
+
+class ObjectPipe(SelectableObject):
     def __init__(self):
         self.rd,self.wr = os.pipe()
         self.queue = deque()
     def fileno(self):
         return self.rd
+    def check_recv(self):
+        return len(self.queue) > 0
     def send(self, obj):
         self.queue.append(obj)
-        os.write(self.wr,"X")
+        os.write(self.wr,b"X")
+        self.call_release()
+    def write(self, obj):
+        self.send(obj)
     def recv(self, n=0):
-        os.read(self.rd,1)
+        os.read(self.rd, 1)
         return self.queue.popleft()
-
+    def read(self, n=0):
+        return self.recv(n)
 
 class Message:
     def __init__(self, **args):
         self.__dict__.update(args)
     def __repr__(self):
         return "<Message %s>" % " ".join("%s=%r"%(k,v)
-                                         for (k,v) in self.__dict__.iteritems()
+                                         for (k,v) in six.iteritems(self.__dict__)
                                          if not k.startswith("_"))
 
 class _instance_state:
     def __init__(self, instance):
-        self.im_self = instance.im_self
-        self.im_func = instance.im_func
-        self.im_class = instance.im_class
+        self.__self__ = instance.__self__
+        self.__func__ = instance.__func__
+        self.__self__.__class__ = instance.__self__.__class__
     def __getattr__(self, attr):
-        return getattr(self.im_func, attr)
-
+        return getattr(self.__func__, attr)
     def __call__(self, *args, **kargs):
-        return self.im_func(self.im_self, *args, **kargs)
+        return self.__func__(self.__self__, *args, **kargs)
     def breaks(self):
-        return self.im_self.add_breakpoints(self.im_func)
+        return self.__self__.add_breakpoints(self.__func__)
     def intercepts(self):
-        return self.im_self.add_interception_points(self.im_func)
+        return self.__self__.add_interception_points(self.__func__)
     def unbreaks(self):
-        return self.im_self.remove_breakpoints(self.im_func)
+        return self.__self__.remove_breakpoints(self.__func__)
     def unintercepts(self):
-        return self.im_self.remove_interception_points(self.im_func)
+        return self.__self__.remove_interception_points(self.__func__)
         
 
 ##############
@@ -98,16 +265,16 @@ class ATMT:
     def state(initial=0,final=0,error=0):
         def deco(f,initial=initial, final=final):
             f.atmt_type = ATMT.STATE
-            f.atmt_state = f.func_name
+            f.atmt_state = f.__name__
             f.atmt_initial = initial
             f.atmt_final = final
             f.atmt_error = error
             def state_wrapper(self, *args, **kargs):
                 return ATMT.NewStateRequested(f, self, *args, **kargs)
 
-            state_wrapper.func_name = "%s_wrapper" % f.func_name
+            state_wrapper.__name__ = "%s_wrapper" % f.__name__
             state_wrapper.atmt_type = ATMT.STATE
-            state_wrapper.atmt_state = f.func_name
+            state_wrapper.atmt_state = f.__name__
             state_wrapper.atmt_initial = initial
             state_wrapper.atmt_final = final
             state_wrapper.atmt_error = error
@@ -128,7 +295,7 @@ class ATMT:
         def deco(f, state=state):
             f.atmt_type = ATMT.CONDITION
             f.atmt_state = state.atmt_state
-            f.atmt_condname = f.func_name
+            f.atmt_condname = f.__name__
             f.atmt_prio = prio
             return f
         return deco
@@ -137,7 +304,7 @@ class ATMT:
         def deco(f, state=state):
             f.atmt_type = ATMT.RECV
             f.atmt_state = state.atmt_state
-            f.atmt_condname = f.func_name
+            f.atmt_condname = f.__name__
             f.atmt_prio = prio
             return f
         return deco
@@ -146,7 +313,7 @@ class ATMT:
         def deco(f, state=state):
             f.atmt_type = ATMT.IOEVENT
             f.atmt_state = state.atmt_state
-            f.atmt_condname = f.func_name
+            f.atmt_condname = f.__name__
             f.atmt_ioname = name
             f.atmt_prio = prio
             f.atmt_as_supersocket = as_supersocket
@@ -158,7 +325,7 @@ class ATMT:
             f.atmt_type = ATMT.TIMEOUT
             f.atmt_state = state.atmt_state
             f.atmt_timeout = timeout
-            f.atmt_condname = f.func_name
+            f.atmt_condname = f.__name__
             return f
         return deco
 
@@ -188,11 +355,16 @@ class _ATMT_supersocket(SuperSocket):
     def fileno(self):
         return self.spa.fileno()
     def send(self, s):
-        if type(s) is not str:
-            s = str(s)
+        if not isinstance(s, bytes):
+            s = bytes(s)
         return self.spa.send(s)
     def recv(self, n=MTU):
-        r = self.spa.recv(n)
+        try:
+            r = self.spa.recv(n)
+        except recv_error:
+            if not WINDOWS:
+                raise
+            return None
         if self.proto is not None:
             r = self.proto(r)
         return r
@@ -226,12 +398,12 @@ class Automaton_metaclass(type):
         while classes:
             c = classes.pop(0) # order is important to avoid breaking method overloading
             classes += list(c.__bases__)
-            for k,v in c.__dict__.iteritems():
+            for k,v in six.iteritems(c.__dict__):
                 if k not in members:
                     members[k] = v
 
-        decorated = [v for v in members.itervalues()
-                     if type(v) is types.FunctionType and hasattr(v, "atmt_type")]
+        decorated = [v for v in six.itervalues(members)
+                     if isinstance(v, types.FunctionType) and hasattr(v, "atmt_type")]
         
         for m in decorated:
             if m.atmt_type == ATMT.STATE:
@@ -263,15 +435,15 @@ class Automaton_metaclass(type):
                     cls.actions[c].append(m)
             
 
-        for v in cls.timeout.itervalues():
-            v.sort(lambda (t1,f1),(t2,f2): cmp(t1,t2))
+        for v in six.itervalues(cls.timeout):
+            v.sort(key=cmp_to_key(lambda t1_f1,t2_f2: cmp(t1_f1[0],t2_f2[0])))
             v.append((None, None))
-        for v in itertools.chain(cls.conditions.itervalues(),
-                                 cls.recv_conditions.itervalues(),
-                                 cls.ioevents.itervalues()):
-            v.sort(lambda c1,c2: cmp(c1.atmt_prio,c2.atmt_prio))
-        for condname,actlst in cls.actions.iteritems():
-            actlst.sort(lambda c1,c2: cmp(c1.atmt_cond[condname], c2.atmt_cond[condname]))
+        for v in itertools.chain(six.itervalues(cls.conditions),
+                                 six.itervalues(cls.recv_conditions),
+                                 six.itervalues(cls.ioevents)):
+            v.sort(key=cmp_to_key(lambda c1,c2: cmp(c1.atmt_prio,c2.atmt_prio)))
+        for condname,actlst in six.iteritems(cls.actions):
+            actlst.sort(key=cmp_to_key(lambda c1,c2: cmp(c1.atmt_cond[condname], c2.atmt_cond[condname])))
 
         for ioev in cls.iosupersockets:
             setattr(cls, ioev.atmt_as_supersocket, _ATMT_to_supersocket(ioev.atmt_as_supersocket, ioev.atmt_ioname, cls))
@@ -282,7 +454,7 @@ class Automaton_metaclass(type):
         s = 'digraph "%s" {\n'  % self.__class__.__name__
         
         se = "" # Keep initial nodes at the begining for better rendering
-        for st in self.states.itervalues():
+        for st in six.itervalues(self.states):
             if st.atmt_initial:
                 se = ('\t"%s" [ style=filled, fillcolor=blue, shape=box, root=true];\n' % st.atmt_state)+se
             elif st.atmt_final:
@@ -291,8 +463,8 @@ class Automaton_metaclass(type):
                 se += '\t"%s" [ style=filled, fillcolor=red, shape=octagon ];\n' % st.atmt_state
         s += se
 
-        for st in self.states.itervalues():
-            for n in st.atmt_origfunc.func_code.co_names+st.atmt_origfunc.func_code.co_consts:
+        for st in six.itervalues(self.states):
+            for n in st.atmt_origfunc.__code__.co_names+st.atmt_origfunc.__code__.co_consts:
                 if n in self.states:
                     s += '\t"%s" -> "%s" [ color=green ];\n' % (st.atmt_state,n)
             
@@ -301,31 +473,26 @@ class Automaton_metaclass(type):
                       [("red",k,v) for k,v in self.recv_conditions.items()]+
                       [("orange",k,v) for k,v in self.ioevents.items()]):
             for f in v:
-                for n in f.func_code.co_names+f.func_code.co_consts:
+                for n in f.__code__.co_names+f.__code__.co_consts:
                     if n in self.states:
                         l = f.atmt_condname
                         for x in self.actions[f.atmt_condname]:
-                            l += "\\l>[%s]" % x.func_name
+                            l += "\\l>[%s]" % x.__name__
                         s += '\t"%s" -> "%s" [label="%s", color=%s];\n' % (k,n,l,c)
-        for k,v in self.timeout.iteritems():
+        for k,v in six.iteritems(self.timeout):
             for t,f in v:
                 if f is None:
                     continue
-                for n in f.func_code.co_names+f.func_code.co_consts:
+                for n in f.__code__.co_names+f.__code__.co_consts:
                     if n in self.states:
                         l = "%s/%.1fs" % (f.atmt_condname,t)                        
                         for x in self.actions[f.atmt_condname]:
-                            l += "\\l>[%s]" % x.func_name
+                            l += "\\l>[%s]" % x.__name__
                         s += '\t"%s" -> "%s" [label="%s",color=blue];\n' % (k,n,l)
         s += "}\n"
         return do_graph(s, **kargs)
-        
 
-
-class Automaton:
-    __metaclass__ = Automaton_metaclass
-
-    ## Methods to overload
+class Automaton(six.with_metaclass(Automaton_metaclass)):
     def parse_args(self, debug=0, store=1, **kargs):
         self.debug_level=debug
         self.socket_kargs = kargs
@@ -339,41 +506,58 @@ class Automaton:
 
 
     ## Utility classes and exceptions
-    class _IO_fdwrapper:
+    class _IO_fdwrapper(SelectableObject):
         def __init__(self,rd,wr):
-            if rd is not None and type(rd) is not int:
-                rd = rd.fileno()
-            if wr is not None and type(wr) is not int:
-                wr = wr.fileno()
-            self.rd = rd
-            self.wr = wr
+            if WINDOWS:
+                # rd will be used for reading and sending
+                if isinstance(rd, ObjectPipe):
+                    self.rd = rd
+                else:
+                    raise OSError("On windows, only instances of ObjectPipe are externally available")
+            else:
+                if rd is not None and not isinstance(rd, int):
+                    rd = rd.fileno()
+                if wr is not None and not isinstance(wr, int):
+                    wr = wr.fileno()
+                self.rd = rd
+                self.wr = wr
         def fileno(self):
             return self.rd
+        def check_recv(self):
+            return self.rd.check_recv()
         def read(self, n=65535):
+            if WINDOWS:
+                return self.rd.recv(n)
             return os.read(self.rd, n)
         def write(self, msg):
+            if WINDOWS:
+                self.rd.send(msg)
+                return self.call_release()
             return os.write(self.wr,msg)
         def recv(self, n=65535):
             return self.read(n)        
         def send(self, msg):
             return self.write(msg)
 
-    class _IO_mixer:
+    class _IO_mixer(SelectableObject):
         def __init__(self,rd,wr):
             self.rd = rd
             self.wr = wr
         def fileno(self):
-            if type(self.rd) is int:
+            if isinstance(self.rd, int):
                 return self.rd
             return self.rd.fileno()
+        def check_recv(self):
+            return self.rd.check_recv()
         def recv(self, n=None):
             return self.rd.recv(n)
         def read(self, n=None):
-            return self.rd.recv(n)        
+            return self.recv(n)
         def send(self, msg):
-            return self.wr.send(msg)
+            self.wr.send(msg)
+            return self.call_release()
         def write(self, msg):
-            return self.wr.send(msg)
+            return self.send(msg)
 
 
     class AutomatonException(Exception):
@@ -439,7 +623,7 @@ class Automaton:
         external_fd = kargs.pop("external_fd",{})
         self.send_sock_class = kargs.pop("ll", conf.L3socket)
         self.recv_sock_class = kargs.pop("recvsock", conf.L2listen)
-        self.started = thread.allocate_lock()
+        self.started = threading.Lock()
         self.threadid = None
         self.breakpointed = None
         self.breakpoints = set()
@@ -456,16 +640,18 @@ class Automaton:
         self.ioout = {}
         for n in self.ionames:
             extfd = external_fd.get(n)
-            if type(extfd) is not tuple:
+            if not isinstance(extfd, tuple):
                 extfd = (extfd,extfd)
+            elif WINDOWS:
+                raise OSError("Tuples are not allowed as external_fd on windows")
             ioin,ioout = extfd                
             if ioin is None:
                 ioin = ObjectPipe()
-            elif type(ioin) is not types.InstanceType:
+            elif not isinstance(ioin, SelectableObject):
                 ioin = self._IO_fdwrapper(ioin,None)
             if ioout is None:
-                ioout = ObjectPipe()
-            elif type(ioout) is not types.InstanceType:
+                ioout = ioin if WINDOWS else ObjectPipe()
+            elif not isinstance(ioout, SelectableObject):
                 ioout = self._IO_fdwrapper(None,ioout)
 
             self.ioin[n] = ioin
@@ -478,8 +664,6 @@ class Automaton:
         for stname in self.states:
             setattr(self, stname, 
                     _instance_state(getattr(self, stname)))
-        
-        self.parse_args(*args, **kargs)
 
         self.start()
 
@@ -493,29 +677,31 @@ class Automaton:
         try:
             self.debug(5, "Trying %s [%s]" % (cond.atmt_type, cond.atmt_condname))
             cond(self,*args, **kargs)
-        except ATMT.NewStateRequested, state_req:
+        except ATMT.NewStateRequested as state_req:
             self.debug(2, "%s [%s] taken to state [%s]" % (cond.atmt_type, cond.atmt_condname, state_req.state))
             if cond.atmt_type == ATMT.RECV:
                 if self.store_packets:
                     self.packets.append(args[0])
             for action in self.actions[cond.atmt_condname]:
-                self.debug(2, "   + Running action [%s]" % action.func_name)
+                self.debug(2, "   + Running action [%s]" % action.__name__)
                 action(self, *state_req.action_args, **state_req.action_kargs)
             raise
-        except Exception,e:
+        except Exception as e:
             self.debug(2, "%s [%s] raised exception [%s]" % (cond.atmt_type, cond.atmt_condname, e))
             raise
         else:
             self.debug(2, "%s [%s] not taken" % (cond.atmt_type, cond.atmt_condname))
 
     def _do_start(self, *args, **kargs):
-        
-        thread.start_new_thread(self._do_control, args, kargs)
+        ready = threading.Event()
+        _t = threading.Thread(target=self._do_control, args=(ready,) + (args), kwargs=kargs)
+        _t.setDaemon(True)
+        _t.start()
+        ready.wait()
 
-
-    def _do_control(self, *args, **kargs):
+    def _do_control(self, ready, *args, **kargs):
         with self.started:
-            self.threadid = thread.get_ident()
+            self.threadid = threading.currentThread().ident
 
             # Update default parameters
             a = args+self.init_args[len(args):]
@@ -525,13 +711,15 @@ class Automaton:
     
             # Start the automaton
             self.state=self.initial_states[0](self)
-            self.send_sock = self.send_sock_class()
+            self.send_sock = self.send_sock_class(**self.socket_kargs)
             self.listen_sock = self.recv_sock_class(**self.socket_kargs)
             self.packets = PacketList(name="session[%s]"%self.__class__.__name__)
 
             singlestep = True
             iterator = self._do_iter()
             self.debug(3, "Starting control thread [tid=%i]" % self.threadid)
+            # Sync threads
+            ready.set()
             try:
                 while True:
                     c = self.cmdin.recv()
@@ -545,7 +733,7 @@ class Automaton:
                     elif c.type == _ATMT_Command.STOP:
                         break
                     while True:
-                        state = iterator.next()
+                        state = next(iterator)
                         if isinstance(state, self.CommandMessage):
                             break
                         elif isinstance(state, self.Breakpoint):
@@ -556,12 +744,12 @@ class Automaton:
                             c = Message(type=_ATMT_Command.SINGLESTEP,state=state)
                             self.cmdout.send(c)
                             break
-            except StopIteration,e:
+            except StopIteration as e:
                 c = Message(type=_ATMT_Command.END, result=e.args[0])
                 self.cmdout.send(c)
-            except Exception,e:
+            except Exception as e:
                 exc_info = sys.exc_info()
-                self.debug(3, "Transfering exception from tid=%i:\n%s"% (self.threadid, traceback.format_exc(exc_info)))
+                self.debug(3, "Transfering exception from tid=%i:\n%s"% (self.threadid, traceback.format_exception(*exc_info)))
                 m = Message(type=_ATMT_Command.EXCEPTION, exception=e, exc_info=exc_info)
                 self.cmdout.send(m)        
             self.debug(3, "Stopping control thread (tid=%i)"%self.threadid)
@@ -587,7 +775,7 @@ class Automaton:
     
                 if state_output is None:
                     state_output = ()
-                elif type(state_output) is not list:
+                elif not isinstance(state_output, list):
                     state_output = state_output,
                 
                 # Then check immediate conditions
@@ -603,7 +791,7 @@ class Automaton:
     
                 # Finally listen and pay attention to timeouts
                 expirations = iter(self.timeout[self.state.state])
-                next_timeout,timeout_func = expirations.next()
+                next_timeout,timeout_func = next(expirations)
                 t0 = time.time()
                 
                 fds = [self.cmdin]
@@ -611,40 +799,44 @@ class Automaton:
                     fds.append(self.listen_sock)
                 for ioev in self.ioevents[self.state.state]:
                     fds.append(self.ioin[ioev.atmt_ioname])
-                while 1:
+                while True:
                     t = time.time()-t0
                     if next_timeout is not None:
                         if next_timeout <= t:
                             self._run_condition(timeout_func, *state_output)
-                            next_timeout,timeout_func = expirations.next()
+                            next_timeout,timeout_func = next(expirations)
                     if next_timeout is None:
                         remain = None
                     else:
                         remain = next_timeout-t
     
                     self.debug(5, "Select on %r" % fds)
-                    r,_,_ = select(fds,[],[],remain)
+                    r = select_objects(fds, remain)
                     self.debug(5, "Selected %r" % r)
                     for fd in r:
                         self.debug(5, "Looking at %r" % fd)
                         if fd == self.cmdin:
                             yield self.CommandMessage("Received command message")
                         elif fd == self.listen_sock:
-                            pkt = self.listen_sock.recv(MTU)
-                            if pkt is not None:
-                                if self.master_filter(pkt):
-                                    self.debug(3, "RECVD: %s" % pkt.summary())
-                                    for rcvcond in self.recv_conditions[self.state.state]:
-                                        self._run_condition(rcvcond, pkt, *state_output)
-                                else:
-                                    self.debug(4, "FILTR: %s" % pkt.summary())
+                            try:
+                                pkt = self.listen_sock.recv(MTU)
+                            except recv_error:
+                                pass
+                            else:
+                                if pkt is not None:
+                                    if self.master_filter(pkt):
+                                        self.debug(3, "RECVD: %s" % pkt.summary())
+                                        for rcvcond in self.recv_conditions[self.state.state]:
+                                            self._run_condition(rcvcond, pkt, *state_output)
+                                    else:
+                                        self.debug(4, "FILTR: %s" % pkt.summary())
                         else:
                             self.debug(3, "IOEVENT on %s" % fd.ioname)
                             for ioevt in self.ioevents[self.state.state]:
                                 if ioevt.atmt_ioname == fd.ioname:
                                     self._run_condition(ioevt, fd, *state_output)
     
-            except ATMT.NewStateRequested,state_req:
+            except ATMT.NewStateRequested as state_req:
                 self.debug(2, "switching from [%s] to [%s]" % (self.state.state,state_req.state))
                 self.state = state_req
                 yield state_req
@@ -697,20 +889,21 @@ class Automaton:
             elif c.type == _ATMT_Command.BREAKPOINT:
                 raise self.Breakpoint("breakpoint triggered on state [%s]"%c.state.state, state=c.state.state)
             elif c.type == _ATMT_Command.EXCEPTION:
-                raise c.exc_info[0],c.exc_info[1],c.exc_info[2]
+                six.reraise(c.exc_info[0], c.exc_info[1], c.exc_info[2])
 
     def runbg(self, resume=None, wait=False):
         self.run(resume, wait)
 
     def next(self):
         return self.run(resume = Message(type=_ATMT_Command.NEXT))
+    __next__ = next
 
     def stop(self):
         self.cmdin.send(Message(type=_ATMT_Command.STOP))
         with self.started:
             # Flush command pipes
             while True:
-                r,_,_ = select([self.cmdin, self.cmdout],[],[],0)
+                r = select_objects([self.cmdin, self.cmdout], 0)
                 if not r:
                     break
                 for fd in r:

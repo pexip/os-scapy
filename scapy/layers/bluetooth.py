@@ -12,13 +12,16 @@ import socket,struct,array
 from ctypes import *
 from select import select
 
-from scapy.all import *
 from scapy.config import conf
+from scapy.data import DLT_BLUETOOTH_HCI_H4
 from scapy.packet import *
 from scapy.fields import *
 from scapy.supersocket import SuperSocket
 from scapy.sendrecv import sndrcv
 from scapy.data import MTU
+from scapy.consts import WINDOWS
+from scapy.error import warning, log_loading
+
 
 ##########
 # Fields #
@@ -40,12 +43,12 @@ class LEMACField(Field):
         Field.__init__(self, name, default, "6s")
     def i2m(self, pkt, x):
         if x is None:
-            return "\0\0\0\0\0\0"
+            return b"\0\0\0\0\0\0"
         return mac2str(x)[::-1]
     def m2i(self, pkt, x):
         return str2mac(x[::-1])
     def any2i(self, pkt, x):
-        if type(x) is str and len(x) is 6:
+        if isinstance(x, str) and len(x) is 6:
             x = self.m2i(pkt, x)
         return x
     def i2repr(self, pkt, x):
@@ -56,25 +59,54 @@ class LEMACField(Field):
     def randval(self):
         return RandMAC()
 
+_bluetooth_packet_types = {
+        0: "Acknowledgement",
+        1: "Command",
+        2: "ACL Data",
+        3: "Synchronous",
+        4: "Event",
+        5: "Reserve",
+        14: "Vendor",
+        15: "Link Control"
+    }
 
 class HCI_Hdr(Packet):
     name = "HCI header"
-    fields_desc = [ ByteEnumField("type",2,{1:"command",2:"ACLdata",3:"SCOdata",4:"event",5:"vendor"}),]
+    fields_desc = [ ByteEnumField("type", 2, _bluetooth_packet_types) ]
 
     def mysummary(self):
         return self.sprintf("HCI %type%")
 
 class HCI_ACL_Hdr(Packet):
     name = "HCI ACL header"
-    fields_desc = [ ByteField("handle",0), # Actually, handle is 12 bits and flags is 4.
-                    ByteField("flags",0),  # I wait to write a LEBitField
+    fields_desc = [ BitField("handle",0,12),    # TODO: Create and use LEBitField
+                    BitField("PB",0,2),      # They are recieved as a **combined** LE Short
+                    BitField("BC",0,2),      # Handle is 12 bits, eacg flag is 2 bits.
                     LEShortField("len",None), ]
+
+    def pre_dissect(self, s):
+        # Recieve data as LE stored as
+        # .... 1111 0100 1100 = handle
+        # 1010 .... .... .... = flags
+        # And turn it into
+        # 1111 0100 1100 .... = handle
+        # .... .... .... 1010 = flags
+        hf = socket.ntohs(struct.unpack("!H", s[:2])[0])
+        r = ((hf & 0x0fff) << 4) + (hf >> 12)
+        return struct.pack("!H", r) + s[2:]
+
+    def post_dissect(self, s):
+        self.raw_packet_cache = None # Reset packet to allow post_build
+        return s
+
     def post_build(self, p, pay):
         p += pay
         if self.len is None:
-            l = len(p)-4
-            p = p[:2]+chr(l&0xff)+chr((l>>8)&0xff)+p[4:]
-        return p
+            p = p[:2] + struct.pack("<H", len(pay)) + p[4:]
+        # Reverse, opposite of pre_dissect
+        hf = struct.unpack("!H", p[:2])[0]
+        r = socket.ntohs(((hf & 0xf) << 12) + (hf >> 4))
+        return struct.pack("!H", r) + p[2:]
 
 
 class L2CAP_Hdr(Packet):
@@ -85,8 +117,7 @@ class L2CAP_Hdr(Packet):
     def post_build(self, p, pay):
         p += pay
         if self.len is None:
-            l = len(pay)
-            p = chr(l&0xff)+chr((l>>8)&0xff)+p[2:]
+            p = struct.pack("<H", len(pay)) + p[2:]
         return p
 
 
@@ -104,8 +135,7 @@ class L2CAP_CmdHdr(Packet):
     def post_build(self, p, pay):
         p += pay
         if self.len is None:
-            l = len(p)-4
-            p = p[:2]+chr(l&0xff)+chr((l>>8)&0xff)+p[4:]
+            p = p[:2] + struct.pack("<H", len(pay)) + p[4:]
         return p
     def answers(self, other):
         if other.id == self.id:
@@ -131,7 +161,7 @@ class L2CAP_ConnResp(Packet):
                     LEShortEnumField("status",0,["no_info", "authen_pend", "author_pend", "reserved"]),
                     ]
     def answers(self, other):
-        return self.scid == other.scid
+        return isinstance(other, L2CAP_ConnReq) and self.dcid == other.scid
 
 class L2CAP_CmdRej(Packet):
     name = "L2CAP Command Rej"
@@ -152,7 +182,7 @@ class L2CAP_ConfResp(Packet):
                     LEShortEnumField("result",0,["success","unaccept","reject","unknown"]),
                     ]
     def answers(self, other):
-        return self.scid == other.scid
+        return isinstance(other, L2CAP_ConfReq) and self.scid == other.dcid
 
 
 class L2CAP_DisconnReq(Packet):
@@ -244,6 +274,11 @@ class ATT_Read_By_Type_Request_128bit(Packet):
                     XLEShortField("end", 0xffff),
                     XLELongField("uuid1", None),
                     XLELongField("uuid2", None)]
+    @classmethod
+    def dispatch_hook(cls, _pkt=None, *args, **kargs):
+        if _pkt and len(_pkt) == 6:
+            return ATT_Read_By_Type_Request
+        return ATT_Read_By_Type_Request_128bit
 
 class ATT_Read_By_Type_Request(Packet):
     name = "Read By Type Request"
@@ -322,11 +357,11 @@ class SM_Pairing_Response(Packet):
 
 class SM_Confirm(Packet):
     name = "Pairing Confirm"
-    fields_desc = [ StrFixedLenField("confirm", '\x00' * 16, 16) ]
+    fields_desc = [ StrFixedLenField("confirm", b'\x00' * 16, 16) ]
 
 class SM_Random(Packet):
     name = "Pairing Random"
-    fields_desc = [ StrFixedLenField("random", '\x00' * 16, 16) ]
+    fields_desc = [ StrFixedLenField("random", b'\x00' * 16, 16) ]
 
 class SM_Failed(Packet):
     name = "Pairing Failed"
@@ -334,16 +369,16 @@ class SM_Failed(Packet):
 
 class SM_Encryption_Information(Packet):
     name = "Encryption Information"
-    fields_desc = [ StrFixedLenField("ltk", "\x00" * 16, 16), ]
+    fields_desc = [ StrFixedLenField("ltk", b"\x00" * 16, 16), ]
 
 class SM_Master_Identification(Packet):
     name = "Master Identification"
     fields_desc = [ XLEShortField("ediv", 0),
-                    StrFixedLenField("rand", '\x00' * 8, 8), ]
+                    StrFixedLenField("rand", b'\x00' * 8, 8), ]
     
 class SM_Identity_Information(Packet):
     name = "Identity Information"
-    fields_desc = [ StrFixedLenField("irk", '\x00' * 16, 16), ]
+    fields_desc = [ StrFixedLenField("irk", b'\x00' * 16, 16), ]
 
 class SM_Identity_Address_Information(Packet):
     name = "Identity Address Information"
@@ -352,13 +387,13 @@ class SM_Identity_Address_Information(Packet):
     
 class SM_Signing_Information(Packet):
     name = "Signing Information"
-    fields_desc = [ StrFixedLenField("csrk", '\x00' * 16, 16), ]
+    fields_desc = [ StrFixedLenField("csrk", b'\x00' * 16, 16), ]
 
 
 class EIR_Hdr(Packet):
     name = "EIR Header"
     fields_desc = [
-        FieldLenField("len", 0, fmt="B"),
+        LenField("len", None, fmt="B", adjust=lambda x: x+1), # Add bytes mark
         ByteEnumField("type", 0, {
             0x01: "flags",
             0x02: "incomplete_list_16_bit_svc_uuids",
@@ -407,6 +442,9 @@ class EIR_Element(Packet):
 
     @staticmethod
     def length_from(pkt):
+        if not pkt.underlayer:
+            warning("Missing an upper-layer")
+            return 0
         # 'type' byte is included in the length, so substract 1:
         return pkt.underlayer.len - 1
 
@@ -465,8 +503,7 @@ class HCI_Command_Hdr(Packet):
     def post_build(self, p, pay):
         p += pay
         if self.len is None:
-            l = len(p)-3
-            p = p[:2]+chr(l&0xff)+p[3:]
+            p = p[:2] + struct.pack("B", len(pay)) + p[3:]
         return p
 
 class HCI_Cmd_Reset(Packet):
@@ -487,7 +524,7 @@ class HCI_Cmd_LE_Host_Supported(Packet):
 
 class HCI_Cmd_Set_Event_Mask(Packet):
     name = "Set Event Mask"
-    fields_desc = [ StrFixedLenField("mask", "\xff\xff\xfb\xff\x07\xf8\xbf\x3d", 8) ]
+    fields_desc = [ StrFixedLenField("mask", b"\xff\xff\xfb\xff\x07\xf8\xbf\x3d", 8) ]
 
 class HCI_Cmd_Read_BD_Addr(Packet):
     name = "Read BD Addr"
@@ -526,16 +563,6 @@ class HCI_Cmd_LE_Create_Connection(Packet):
                     LEShortField("min_ce", 0),
                     LEShortField("max_ce", 0), ]
     
-class HCI_Cmd_LE_Connection_Update(Packet):
-    name = "LE Connection Update"
-    fields_desc = [ LEShortField("conn_handle", 64),
-                    LEShortField("conn_interval_min", 0),
-                    LEShortField("conn_interval_max", 0),
-                    LEShortField("conn_latency", 0),
-                    LEShortField("timeout", 600),
-                    LEShortField("min_ce_len", 0),
-                    LEShortField("max_ce_len", 0),]
-
 class HCI_Cmd_LE_Create_Connection_Cancel(Packet):
     name = "LE Create Connection Cancel"
 
@@ -581,7 +608,7 @@ class HCI_Cmd_LE_Start_Encryption_Request(Packet):
     fields_desc = [ LEShortField("handle", 0),
                     StrFixedLenField("rand", None, 8),
                     XLEShortField("ediv", 0),
-                    StrFixedLenField("ltk", '\x00' * 16, 16), ]
+                    StrFixedLenField("ltk", b'\x00' * 16, 16), ]
 
 class HCI_Cmd_LE_Long_Term_Key_Request_Negative_Reply(Packet):
     name = "LE Long Term Key Request Negative Reply"
@@ -590,7 +617,7 @@ class HCI_Cmd_LE_Long_Term_Key_Request_Negative_Reply(Packet):
 class HCI_Cmd_LE_Long_Term_Key_Request_Reply(Packet):
     name = "LE Long Term Key Request Reply"
     fields_desc = [ LEShortField("handle", 0),
-                    StrFixedLenField("ltk", '\x00' * 16, 16), ]
+                    StrFixedLenField("ltk", b'\x00' * 16, 16), ]
 
 class HCI_Event_Hdr(Packet):
     name = "HCI Event header"
@@ -682,6 +709,8 @@ bind_layers( HCI_Hdr,       HCI_ACL_Hdr,        type=2)
 bind_layers( HCI_Hdr,       HCI_Event_Hdr,      type=4)
 bind_layers( HCI_Hdr,       conf.raw_layer,           )
 
+conf.l2types.register(DLT_BLUETOOTH_HCI_H4, HCI_Hdr)
+
 bind_layers( HCI_Command_Hdr, HCI_Cmd_Reset, opcode=0x0c03)
 bind_layers( HCI_Command_Hdr, HCI_Cmd_Set_Event_Mask, opcode=0x0c01)
 bind_layers( HCI_Command_Hdr, HCI_Cmd_Set_Event_Filter, opcode=0x0c05)
@@ -751,8 +780,8 @@ bind_layers( ATT_Hdr,       ATT_Find_Information_Request, opcode=0x4)
 bind_layers( ATT_Hdr,       ATT_Find_Information_Response, opcode=0x5)
 bind_layers( ATT_Hdr,       ATT_Find_By_Type_Value_Request, opcode=0x6)
 bind_layers( ATT_Hdr,       ATT_Find_By_Type_Value_Response, opcode=0x7)
-bind_layers( ATT_Hdr,       ATT_Read_By_Type_Request, opcode=0x8)
 bind_layers( ATT_Hdr,       ATT_Read_By_Type_Request_128bit, opcode=0x8)
+bind_layers( ATT_Hdr,       ATT_Read_By_Type_Request, opcode=0x8)
 bind_layers( ATT_Hdr,       ATT_Read_By_Type_Response, opcode=0x9)
 bind_layers( ATT_Hdr,       ATT_Read_Request, opcode=0xa)
 bind_layers( ATT_Hdr,       ATT_Read_Response, opcode=0xb)
@@ -774,27 +803,44 @@ bind_layers( SM_Hdr,        SM_Identity_Information, sm_command=8)
 bind_layers( SM_Hdr,        SM_Identity_Address_Information, sm_command=9)
 bind_layers( SM_Hdr,        SM_Signing_Information, sm_command=0x0a)
 
+class BluetoothSocketError(BaseException):
+    pass
+
+class BluetoothCommandError(BaseException):
+    pass
 
 class BluetoothL2CAPSocket(SuperSocket):
     desc = "read/write packets on a connected L2CAP socket"
-    def __init__(self, peer):
+    def __init__(self, bt_address):
+        if WINDOWS:
+            warning("Not available on Windows")
+            return
         s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW,
                           socket.BTPROTO_L2CAP)
-        s.connect((peer,0))
-
+        s.connect((bt_address,0))
         self.ins = self.outs = s
 
     def recv(self, x=MTU):
         return L2CAP_CmdHdr(self.ins.recv(x))
 
+class BluetoothRFCommSocket(BluetoothL2CAPSocket):
+    """read/write packets on a connected RFCOMM socket"""
+    def __init__(self, bt_address, port=0):
+        s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW,
+                          socket.BTPROTO_RFCOMM)
+        s.connect((bt_address,port))
+        self.ins = self.outs = s
 
 class BluetoothHCISocket(SuperSocket):
     desc = "read/write on a BlueTooth HCI socket"
     def __init__(self, iface=0x10000, type=None):
+        if WINDOWS:
+            warning("Not available on Windows")
+            return
         s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
         s.setsockopt(socket.SOL_HCI, socket.HCI_DATA_DIR,1)
         s.setsockopt(socket.SOL_HCI, socket.HCI_TIME_STAMP,1)
-        s.setsockopt(socket.SOL_HCI, socket.HCI_FILTER, struct.pack("IIIh2x", 0xffffffffL,0xffffffffL,0xffffffffL,0)) #type mask, event mask, event mask, opcode
+        s.setsockopt(socket.SOL_HCI, socket.HCI_FILTER, struct.pack("IIIh2x", 0xffffffff,0xffffffff,0xffffffff,0)) #type mask, event mask, event mask, opcode
         s.bind((iface,))
         self.ins = self.outs = s
 #        s.connect((peer,0))
@@ -810,15 +856,12 @@ class sockaddr_hci(Structure):
         ("hci_channel",     c_ushort),
     ]
 
-class BluetoothSocketError(BaseException):
-    pass
-
-class BluetoothCommandError(BaseException):
-    pass
-
 class BluetoothUserSocket(SuperSocket):
     desc = "read/write H4 over a Bluetooth user channel"
-    def __init__(self, adapter=0):
+    def __init__(self, adapter_index=0):
+        if WINDOWS:
+            warning("Not available on Windows")
+            return
         # s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
         # s.bind((0,1))
 
@@ -847,7 +890,7 @@ class BluetoothUserSocket(SuperSocket):
 
         sa = sockaddr_hci()
         sa.sin_family = 31  # AF_BLUETOOTH
-        sa.hci_dev = adapter # adapter index
+        sa.hci_dev = adapter_index # adapter index
         sa.hci_channel = 1   # HCI_USER_CHANNEL
 
         r = bind(s, sockaddr_hcip(sa), sizeof(sa))
@@ -877,24 +920,24 @@ class BluetoothUserSocket(SuperSocket):
         while self.readable():
             self.recv()
 
+conf.BTsocket = BluetoothRFCommSocket
+
 ## Bluetooth
 
-
 @conf.commands.register
-def srbt(peer, pkts, inter=0.1, *args, **kargs):
+def srbt(bt_address, pkts, inter=0.1, *args, **kargs):
     """send and receive using a bluetooth socket"""
-    s = conf.BTsocket(peer=peer)
+    if "port" in kargs:
+        s = conf.BTsocket(bt_address=bt_address, port=kargs.pop("port"))
+    else:
+        s = conf.BTsocket(bt_address=bt_address)
     a,b = sndrcv(s,pkts,inter=inter,*args,**kargs)
     s.close()
     return a,b
 
 @conf.commands.register
-def srbt1(peer, pkts, *args, **kargs):
+def srbt1(bt_address, pkts, *args, **kargs):
     """send and receive 1 packet using a bluetooth socket"""
-    a,b = srbt(peer, pkts, *args, **kargs)
+    a,b = srbt(bt_address, pkts, *args, **kargs)
     if len(a) > 0:
         return a[0][1]
-
-
-
-conf.BTsocket = BluetoothL2CAPSocket

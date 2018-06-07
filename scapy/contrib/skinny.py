@@ -11,7 +11,8 @@
 ## Copyright (C) 2006    Nicolas Bareil      <nicolas.bareil@ eads.net>    ##
 ##                       EADS/CRC security team                            ##
 ##                                                                         ##
-## This program is free software; you can redistribute it and/or modify it ##
+## This file is part of Scapy                                              ##
+## Scapy is free software: you can redistribute it and/or modify           ##
 ## under the terms of the GNU General Public License version 2 as          ##
 ## published by the Free Software Foundation; version 2.                   ##
 ##                                                                         ##
@@ -22,9 +23,11 @@
 ##                                                                         ##
 #############################################################################
 
+from __future__ import absolute_import
 from scapy.packet import *
 from scapy.fields import *
 from scapy.layers.inet import TCP
+from scapy.modules.six.moves import range
 
 #####################################################################
 # Helpers and constants
@@ -207,13 +210,13 @@ class SkinnyDateTimeField(StrFixedLenField):
         return (year, month, day, hour, min, sec)
     
     def i2m(self, pkt, val):
-        if type(val) is str:
+        if isinstance(val, str):
             val = self.h2i(pkt, val)
         l= val[:2] + (0,) + val[2:7] + (0,)
         return struct.pack('<8I', *l)
 
     def i2h(self, pkt, x):
-        if type(x) is str:
+        if isinstance(x, str):
             return x
         else:
             return time.ctime(time.mktime(x+(0,0,0)))
@@ -223,7 +226,7 @@ class SkinnyDateTimeField(StrFixedLenField):
     
     def h2i(self, pkt, s):
         t = ()
-        if type(s) is str:
+        if isinstance(s, str):
             t = time.strptime(s)
             t = t[:2] + t[2:-3]
         else:
@@ -319,7 +322,7 @@ class SkinnyMessageSoftKeyEvent(Packet):
 class SkinnyMessagePromptStatus(Packet):
     name='Prompt status'
     fields_desc = [ LEIntField("timeout", 0),
-                    StrFixedLenField("text", "\0"*32, 32),
+                    StrFixedLenField("text", b"\0"*32, 32),
                     LEIntField("instance", 1),
                     LEIntField("callid", 0)]
 
@@ -356,7 +359,7 @@ _skinny_message_callinfo_restrictions = ['CallerName'
                                          , 'OriginalCalledName'
                                          , 'OriginalCalledNumber'
                                          , 'LastRedirectName'
-                                         , 'LastRedirectNumber'] + ['Bit%d' % i for i in xrange(8,15)]
+                                         , 'LastRedirectNumber'] + ['Bit%d' % i for i in range(8,15)]
 class SkinnyMessageCallInfo(Packet):
     name='call information'
     fields_desc = [ StrFixedLenField("callername", "Jean Valjean", 40),
@@ -371,10 +374,10 @@ class SkinnyMessageCallInfo(Packet):
                     StrFixedLenField("lastredirectingnum", "1034", 24),
                     LEIntField("originalredirectreason", 0),
                     LEIntField("lastredirectreason", 0),
-                    StrFixedLenField('voicemailboxG', '\0'*24, 24),
-                    StrFixedLenField('voicemailboxD', '\0'*24, 24),
-                    StrFixedLenField('originalvoicemailboxD', '\0'*24, 24),
-                    StrFixedLenField('lastvoicemailboxD', '\0'*24, 24),
+                    StrFixedLenField('voicemailboxG', b'\0'*24, 24),
+                    StrFixedLenField('voicemailboxD', b'\0'*24, 24),
+                    StrFixedLenField('originalvoicemailboxD', b'\0'*24, 24),
+                    StrFixedLenField('lastvoicemailboxD', b'\0'*24, 24),
                     LEIntField('security', 0),
                     FlagsField('restriction', 0, 16, _skinny_message_callinfo_restrictions),
                     LEIntField('unknown', 0)]
