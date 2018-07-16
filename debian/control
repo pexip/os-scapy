@@ -9,6 +9,7 @@ Standards-Version: 3.9.2
 Homepage: http://www.secdev.org/projects/scapy/
 Vcs-Svn: svn://svn.debian.org/python-modules/packages/scapy/trunk/
 Vcs-Browser: http://svn.debian.org/viewsvn/python-modules/packages/scapy/trunk/
+XS-Pexip-Upstream: http://ftp.debian.org/debian/ stretch
 
 Package: python-scapy
 Architecture: all
