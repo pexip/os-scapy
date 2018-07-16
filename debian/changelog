@@ -1,3 +1,45 @@
+scapy (2.3.3-1pexip1) pexip; urgency=medium
+
+  * Migrate to Stretch
+
+ -- John-Mark Bell <jmb@pexip.com>  Mon, 16 Jul 2018 17:30:33 +0100
+
+scapy (2.3.3-1) unstable; urgency=medium
+
+  * New upstream version 2.3.3
+  * debian/control:
+   - Maintainer set to the Internet Measurement Packaging Team (Closes: #833724)
+   - Uploaders set to myself
+   - Removed unnecessary versioned Build-Depends for python
+   - Packaging is now using Git
+    · Repository created under the Internet Measurement Packaging Team
+    · Vcs-Git and Vcs-Browser fields have been updated
+   - Updated standards version to 3.9.8
+   - Replaced Conflicts with Breaks as it makes more sense here for installing
+     over a (very) old version of the package
+  * Bumped compat level to 9
+  * debian/README.source:
+   - Added a note to point to src:scapy3k
+   - Added a note regarding the use of quilt
+  * debian/patches:
+   - Patches refreshed.
+   - Patch for paths now corrects the location of Wireshark's manuf file
+     (Closes: #692408)
+  * debian/rules:
+   - Clean up the stray scapy/VERSION file that gets generated when cleaning
+     the source tree
+
+ -- Iain R. Learmonth <irl@debian.org>  Sat, 03 Dec 2016 19:00:36 +0000
+
+scapy (2.3.2-0.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * New upstream release. (Closes: #773554)
+  * debian/control:
+   - Added dh-python to Build-Depends
+
+ -- Iain R. Learmonth <irl@debian.org>  Fri, 29 Apr 2016 11:30:54 +0100
+
 scapy (2.2.0.1-2) pexip; urgency=low
 
   * No-change rebuild; bump version

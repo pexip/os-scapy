@@ -1,11 +1,11 @@
 --- a/setup.py
 +++ b/setup.py
-@@ -39,7 +39,7 @@
+@@ -40,7 +40,7 @@
+ archive_util.ARCHIVE_FORMATS["ezip"] = (
+     make_ezipfile, [], 'Executable ZIP file')
  
- archive_util.ARCHIVE_FORMATS["ezip"] = (make_ezipfile,[],'Executable ZIP file')
- 
--SCRIPTS = ['bin/scapy','bin/UTscapy']
+-SCRIPTS = ['bin/scapy', 'bin/UTscapy']
 +SCRIPTS = ['bin/scapy']
- # On Windows we also need additional batch files to run the above scripts 
+ # On Windows we also need additional batch files to run the above scripts
  if os.name == "nt":
-   SCRIPTS += ['bin/scapy.bat','bin/UTscapy.bat']
+     SCRIPTS += ['bin/scapy.bat', 'bin/UTscapy.bat']
