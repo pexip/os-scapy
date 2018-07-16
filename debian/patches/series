@@ -1,2 +1,3 @@
 setup.py.patch
 paths.patch
+ioerror.patch

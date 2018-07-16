@@ -1,0 +1,28 @@
+From a53cd52e5598a9b2f35520655d36db37676452b5 Mon Sep 17 00:00:00 2001
+From: Geir Sporsheim <geir@pexip.com>
+Date: Thu, 21 Nov 2013 13:18:30 +0100
+Subject: [PATCH] Handle IOErrors when finding working interface
+
+Make sure we handle errors e.g. when an interface is removed
+in the time between we get the list of existing interfaces
+and when we are actually reading the flags.
+---
+ scapy/arch/linux.py | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/scapy/arch/linux.py b/scapy/arch/linux.py
+index 68a0380..568a784 100644
+--- a/scapy/arch/linux.py
++++ b/scapy/arch/linux.py
+@@ -117,7 +117,10 @@ def get_working_if():
+     for i in get_if_list():
+         if i == LOOPBACK_NAME:                
+             continue
+-        ifflags = struct.unpack("16xH14x",get_if(i,SIOCGIFFLAGS))[0]
++        try:
++            ifflags = struct.unpack("16xH14x",get_if(i,SIOCGIFFLAGS))[0]
++        except IOError:
++            continue
+         if ifflags & IFF_UP:
+             return i
+     return LOOPBACK_NAME

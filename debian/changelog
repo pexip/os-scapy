@@ -1,6 +1,8 @@
 scapy (2.3.3-1pexip1) pexip; urgency=medium
 
   * Migrate to Stretch
+  * debian/patches/ioerror.patch: Handle IOErrors when finding working
+    interface
 
  -- John-Mark Bell <jmb@pexip.com>  Mon, 16 Jul 2018 17:30:33 +0100
 
