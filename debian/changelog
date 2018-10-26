@@ -1,3 +1,9 @@
+scapy (2.3.3-1pexip2) pexip; urgency=medium
+
+  * debian/patches/ipv6.patch: Backport upstream fix to IPv6 parsing
+
+ -- John-Mark Bell <jmb@pexip.com>  Fri, 26 Oct 2018 15:03:05 +0100
+
 scapy (2.3.3-1pexip1) pexip; urgency=medium
 
   * Migrate to Stretch
