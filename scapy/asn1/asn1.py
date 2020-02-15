@@ -8,18 +8,23 @@
 ASN.1 (Abstract Syntax Notation One)
 """
 
+from __future__ import absolute_import
+from __future__ import print_function
 import random
 from datetime import datetime
 from scapy.config import conf
 from scapy.error import Scapy_Exception, warning
-from scapy.volatile import RandField, RandIP
+from scapy.volatile import RandField, RandIP, GeneralizedTime
 from scapy.utils import Enum_metaclass, EnumElement, binrepr
+from scapy.compat import plain_str, chb, raw, orb
+import scapy.modules.six as six
+from scapy.modules.six.moves import range
 
 class RandASN1Object(RandField):
     def __init__(self, objlist=None):
         self.objlist = [
             x._asn1_obj
-            for x in ASN1_Class_UNIVERSAL.__rdict__.itervalues()
+            for x in six.itervalues(ASN1_Class_UNIVERSAL.__rdict__)
             if hasattr(x, "_asn1_obj")
         ] if objlist is None else objlist
         self.chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
@@ -30,13 +35,16 @@ class RandASN1Object(RandField):
         elif issubclass(o, ASN1_IPADDRESS):
             z = RandIP()._fix()
             return o(z)
+        elif issubclass(o, ASN1_GENERALIZED_TIME) or issubclass(o, ASN1_UTC_TIME):
+            z = GeneralizedTime()._fix()
+            return o(z)
         elif issubclass(o, ASN1_STRING):
             z = int(random.expovariate(0.05)+1)
-            return o("".join(random.choice(self.chars) for _ in xrange(z)))
+            return o("".join(random.choice(self.chars) for _ in range(z)))
         elif issubclass(o, ASN1_SEQUENCE) and (n < 10):
             z = int(random.expovariate(0.08)+1)
             return o([self.__class__(objlist=self.objlist)._fix(n + 1)
-                      for _ in xrange(z)])
+                      for _ in range(z)])
         return ASN1_INTEGER(int(random.gauss(0,1000)))
 
 
@@ -72,8 +80,7 @@ class ASN1Codec(EnumElement):
 class ASN1_Codecs_metaclass(Enum_metaclass):
     element_class = ASN1Codec
 
-class ASN1_Codecs:
-    __metaclass__ = ASN1_Codecs_metaclass
+class ASN1_Codecs(six.with_metaclass(ASN1_Codecs_metaclass)):
     BER = 1
     DER = 2
     PER = 3
@@ -104,7 +111,7 @@ class ASN1Tag(EnumElement):
     def get_codec(self, codec):
         try:
             c = self._codec[codec]
-        except KeyError,msg:
+        except KeyError as msg:
             raise ASN1_Error("Codec %r not found for tag %r" % (codec, self))
         return c
 
@@ -112,13 +119,13 @@ class ASN1_Class_metaclass(Enum_metaclass):
     element_class = ASN1Tag
     def __new__(cls, name, bases, dct): # XXX factorise a bit with Enum_metaclass.__new__()
         for b in bases:
-            for k,v in b.__dict__.iteritems():
+            for k,v in six.iteritems(b.__dict__):
                 if k not in dct and isinstance(v,ASN1Tag):
                     dct[k] = v.clone()
 
         rdict = {}
-        for k,v in dct.iteritems():
-            if type(v) is int:
+        for k,v in six.iteritems(dct):
+            if isinstance(v, int):
                 v = ASN1Tag(k,v) 
                 dct[k] = v
                 rdict[v] = v
@@ -133,8 +140,8 @@ class ASN1_Class_metaclass(Enum_metaclass):
         return cls
             
 
-class ASN1_Class:
-    __metaclass__ = ASN1_Class_metaclass
+class ASN1_Class(six.with_metaclass(ASN1_Class_metaclass)):
+    pass
 
 class ASN1_Class_UNIVERSAL(ASN1_Class):
     name = "UNIVERSAL"
@@ -172,6 +179,7 @@ class ASN1_Class_UNIVERSAL(ASN1_Class):
     BMP_STRING = 30
     IPADDRESS = 0|0x40          # application-specific encoding
     COUNTER32 = 1|0x40          # application-specific encoding
+    GAUGE32 = 2|0x40            # application-specific encoding
     TIME_TICKS = 3|0x40         # application-specific encoding
 
 
@@ -184,8 +192,7 @@ class ASN1_Object_metaclass(type):
             warning("Error registering %r for %r" % (c.tag, c.codec))
         return c
 
-class ASN1_Object:
-    __metaclass__ = ASN1_Object_metaclass
+class ASN1_Object(six.with_metaclass(ASN1_Object_metaclass)):
     tag = ASN1_Class_UNIVERSAL.ANY
     def __init__(self, val):
         self.val = val
@@ -195,14 +202,24 @@ class ASN1_Object:
         return "<%s[%r]>" % (self.__dict__.get("name", self.__class__.__name__), self.val)
     def __str__(self):
         return self.enc(conf.ASN1_default_codec)
+    def __bytes__(self):
+        return self.enc(conf.ASN1_default_codec)
     def strshow(self, lvl=0):
         return ("  "*lvl)+repr(self)+"\n"
     def show(self, lvl=0):
-        print self.strshow(lvl)
+        print(self.strshow(lvl))
     def __eq__(self, other):
         return self.val == other
-    def __cmp__(self, other):
-        return cmp(self.val, other)
+    def __lt__(self, other):
+        return self.val < other
+    def __le__(self, other):
+        return self.val <= other
+    def __gt__(self, other):
+        return self.val > other
+    def __ge__(self, other):
+        return self.val >= other
+    def __ne__(self, other):
+        return self.val != other
 
 
 #######################
@@ -217,7 +234,7 @@ class ASN1_DECODING_ERROR(ASN1_Object):
         ASN1_Object.__init__(self, val)
         self.exc = exc
     def __repr__(self):
-        return "<%s[%r]{{%s}}>" % (self.__dict__.get("name", self.__class__.__name__),
+        return "<%s[%r]{{%r}}>" % (self.__dict__.get("name", self.__class__.__name__),
                                    self.val, self.exc.args[0])
     def enc(self, codec):
         if isinstance(self.val, ASN1_Object):
@@ -248,12 +265,14 @@ class ASN1_INTEGER(ASN1_Object):
             r = r[:10] + "..." + r[-10:]
         return h + " <%s[%s]>" % (self.__dict__.get("name", self.__class__.__name__), r)
 
+
 class ASN1_BOOLEAN(ASN1_INTEGER):
     tag = ASN1_Class_UNIVERSAL.BOOLEAN
     # BER: 0 means False, anything else means True
     def __repr__(self):
-        return str((not (self.val==0))) + " " + ASN1_Object.__repr__(self)
-    
+        return '%s %s' % (not (self.val==0), ASN1_Object.__repr__(self))
+
+
 class ASN1_BIT_STRING(ASN1_Object):
     """
     /!\ ASN1_BIT_STRING values are bit strings like "011101".
@@ -262,28 +281,61 @@ class ASN1_BIT_STRING(ASN1_Object):
     """
     tag = ASN1_Class_UNIVERSAL.BIT_STRING
     def __init__(self, val, readable=False):
-        if readable:
-            self.val_readable = val
-            val = "".join(binrepr(ord(x)).zfill(8) for x in val)
-            self.unused_bits = 0
+        if not readable:
+            self.val = val
         else:
-            if len(val) % 8 == 0:
-                self.unused_bits = 0
+            self.val_readable = val
+    def __setattr__(self, name, value):
+        str_value = None
+        if isinstance(value, str):
+            str_value = value
+            value = raw(value)
+        if name == "val_readable":
+            if isinstance(value, bytes):
+                val = b"".join(binrepr(orb(x)).zfill(8).encode("utf8") for x in value)
             else:
-                self.unused_bits = 8 - len(val)%8
-            padded_val = val + "0"*self.unused_bits
-            bytes_arr = zip(*[iter(padded_val)]*8)
-            self.val_readable = "".join(chr(int("".join(x),2)) for x in bytes_arr)
-        ASN1_Object.__init__(self, val)
+                val = "<invalid val_readable>"
+            super(ASN1_Object, self).__setattr__("val", val)
+            super(ASN1_Object, self).__setattr__(name, value)
+            super(ASN1_Object, self).__setattr__("unused_bits", 0)
+        elif name == "val":
+            if not str_value:
+                str_value = plain_str(value)
+            if isinstance(value, bytes):
+                if any(c for c in str_value if c not in ["0", "1"]):
+                    print("Invalid operation: 'val' is not a valid bit string.")
+                    return
+                else:
+                    if len(value) % 8 == 0:
+                        unused_bits = 0
+                    else:
+                        unused_bits = 8 - (len(value) % 8)
+                    padded_value = str_value + ("0" * unused_bits)
+                    bytes_arr = zip(*[iter(padded_value)]*8)
+                    val_readable = b"".join(chb(int("".join(x),2)) for x in bytes_arr)
+            else:
+                val_readable = "<invalid val>"
+                unused_bits = 0
+            super(ASN1_Object, self).__setattr__("val_readable", val_readable)
+            super(ASN1_Object, self).__setattr__(name, value)
+            super(ASN1_Object, self).__setattr__("unused_bits", unused_bits)
+        elif name == "unused_bits":
+            print("Invalid operation: unused_bits rewriting is not supported.")
+        else:
+            super(ASN1_Object, self).__setattr__(name, value)
     def __repr__(self):
         if len(self.val) <= 16:
-            return "<%s[%r] (%d unused bit%s)>" % (self.__dict__.get("name", self.__class__.__name__), self.val, self.unused_bits, "s" if self.unused_bits>1 else "")
+            v = plain_str(self.val)
+            return "<%s[%s] (%d unused bit%s)>" % (self.__dict__.get("name", self.__class__.__name__), v, self.unused_bits, "s" if self.unused_bits>1 else "")
         else:
             s = self.val_readable
             if len(s) > 20:
-                s = s[:10] + "..." + s[-10:]
-            return "<%s[%r] (%d unused bit%s)>" % (self.__dict__.get("name", self.__class__.__name__), s, self.unused_bits, "s" if self.unused_bits>1 else "")
+                s = s[:10] + b"..." + s[-10:]
+            v = plain_str(self.val)
+            return "<%s[%s] (%d unused bit%s)>" % (self.__dict__.get("name", self.__class__.__name__), v, self.unused_bits, "s" if self.unused_bits>1 else "")
     def __str__(self):
+        return self.val_readable
+    def __bytes__(self):
         return self.val_readable
 
 class ASN1_STRING(ASN1_Object):
@@ -297,7 +349,7 @@ class ASN1_NULL(ASN1_Object):
 class ASN1_OID(ASN1_Object):
     tag = ASN1_Class_UNIVERSAL.OID
     def __init__(self, val):
-        val = conf.mib._oid(val)
+        val = conf.mib._oid(plain_str(val))
         ASN1_Object.__init__(self, val)
         self.oidname = conf.mib._oidname(val)
     def __repr__(self):
@@ -327,26 +379,50 @@ class ASN1_IA5_STRING(ASN1_STRING):
 class ASN1_UTC_TIME(ASN1_STRING):
     tag = ASN1_Class_UNIVERSAL.UTC_TIME
     def __init__(self, val):
-        pretty_time = ""
-        if len(val) == 13 and val[-1] == "Z":
-            dt = datetime.strptime(val[:-1], "%y%m%d%H%M%S")
-            pretty_time = dt.strftime("%b %d %H:%M:%S %Y GMT")
-        self.pretty_time = pretty_time
-        ASN1_STRING.__init__(self, val)
+        super(ASN1_UTC_TIME, self).__init__(val)
+    def __setattr__(self, name, value):
+        if isinstance(value, bytes):
+            value = plain_str(value)
+        if name == "val":
+            pretty_time = None
+            if (isinstance(value, str) and
+                len(value) == 13 and value[-1] == "Z"):
+                dt = datetime.strptime(value[:-1], "%y%m%d%H%M%S")
+                pretty_time = dt.strftime("%b %d %H:%M:%S %Y GMT")
+            else:
+                pretty_time = "%s [invalid utc_time]" % value
+            super(ASN1_UTC_TIME, self).__setattr__("pretty_time", pretty_time)
+            super(ASN1_UTC_TIME, self).__setattr__(name, value)
+        elif name == "pretty_time":
+            print("Invalid operation: pretty_time rewriting is not supported.")
+        else:
+            super(ASN1_UTC_TIME, self).__setattr__(name, value)
     def __repr__(self):
-        return self.pretty_time + " " + ASN1_STRING.__repr__(self)
+        return "%s %s" % (self.pretty_time, ASN1_STRING.__repr__(self))
 
 class ASN1_GENERALIZED_TIME(ASN1_STRING):
     tag = ASN1_Class_UNIVERSAL.GENERALIZED_TIME
     def __init__(self, val):
-        pretty_time = ""
-        if len(val) == 15 and val[-1] == "Z":
-            dt = datetime.strptime(val[:-1], "%Y%m%d%H%M%S")
-            pretty_time = dt.strftime("%b %d %H:%M:%S %Y GMT")
-        self.pretty_time = pretty_time
-        ASN1_STRING.__init__(self, val)
+        super(ASN1_GENERALIZED_TIME, self).__init__(val)
+    def __setattr__(self, name, value):
+        if isinstance(value, bytes):
+            value = plain_str(value)
+        if name == "val":
+            pretty_time = None
+            if (isinstance(value, str) and
+                len(value) == 15 and value[-1] == "Z"):
+                dt = datetime.strptime(value[:-1], "%Y%m%d%H%M%S")
+                pretty_time = dt.strftime("%b %d %H:%M:%S %Y GMT")
+            else:
+                pretty_time = "%s [invalid generalized_time]" % value
+            super(ASN1_GENERALIZED_TIME, self).__setattr__("pretty_time", pretty_time)
+            super(ASN1_GENERALIZED_TIME, self).__setattr__(name, value)
+        elif name == "pretty_time":
+            print("Invalid operation: pretty_time rewriting is not supported.")
+        else:
+            super(ASN1_GENERALIZED_TIME, self).__setattr__(name, value)
     def __repr__(self):
-        return self.pretty_time + " " + ASN1_STRING.__repr__(self)
+        return "%s %s" % (self.pretty_time, ASN1_STRING.__repr__(self))
 
 class ASN1_ISO646_STRING(ASN1_STRING):
     tag = ASN1_Class_UNIVERSAL.ISO646_STRING
@@ -373,7 +449,10 @@ class ASN1_IPADDRESS(ASN1_STRING):
 
 class ASN1_COUNTER32(ASN1_INTEGER):
     tag = ASN1_Class_UNIVERSAL.COUNTER32
-    
+
+class ASN1_GAUGE32(ASN1_INTEGER):
+    tag = ASN1_Class_UNIVERSAL.GAUGE32
+
 class ASN1_TIME_TICKS(ASN1_INTEGER):
     tag = ASN1_Class_UNIVERSAL.TIME_TICKS
    

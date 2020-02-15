@@ -8,13 +8,18 @@
 Classes that implement ASN.1 data structures.
 """
 
+from __future__ import absolute_import
 from scapy.asn1.asn1 import *
 from scapy.asn1.ber import *
 from scapy.asn1.mib import *
 from scapy.volatile import *
+from scapy.compat import *
 from scapy.base_classes import BasePacket
 from scapy.utils import binrepr
 from scapy import packet
+from functools import reduce
+import scapy.modules.six as six
+from scapy.modules.six.moves import range
 
 class ASN1F_badsequence(Exception):
     pass
@@ -40,7 +45,7 @@ class ASN1F_field(ASN1F_element):
         self.name = name
         if default is None:
             self.default = None
-        elif type(default) is ASN1_NULL:
+        elif isinstance(default, ASN1_NULL):
             self.default = default
         else:
             self.default = self.ASN1_tag.asn1_object(default)
@@ -89,7 +94,7 @@ class ASN1F_field(ASN1F_element):
             return codec.dec(s, context=self.context)
     def i2m(self, pkt, x):
         if x is None:
-            return ""
+            return b""
         if isinstance(x, ASN1_Object):
             if ( self.ASN1_tag == ASN1_Class_UNIVERSAL.ANY
                  or x.tag == ASN1_Class_UNIVERSAL.RAW
@@ -109,7 +114,7 @@ class ASN1F_field(ASN1F_element):
             except ASN1F_badsequence:
                 c = packet.Raw(s)
             cpad = c.getlayer(packet.Raw)
-            s = ""
+            s = b""
             if cpad is not None:
                 s = cpad.load
                 del(cpad.underlayer.payload)
@@ -127,9 +132,9 @@ class ASN1F_field(ASN1F_element):
     def do_copy(self, x):
         if hasattr(x, "copy"):
             return x.copy()
-        if type(x) is list:
+        if isinstance(x, list):
             x = x[:]
-            for i in xrange(len(x)):
+            for i in range(len(x)):
                 if isinstance(x[i], BasePacket):
                     x[i] = x[i].copy()
         return x
@@ -170,42 +175,32 @@ class ASN1F_enum_INTEGER(ASN1F_INTEGER):
                                explicit_tag=explicit_tag)
         i2s = self.i2s = {}
         s2i = self.s2i = {}
-        if type(enum) is list:
-            keys = xrange(len(enum))
+        if isinstance(enum, list):
+            keys = range(len(enum))
         else:
-            keys = enum.keys()
-        if any(isinstance(x, basestring) for x in keys):
+            keys = list(enum)
+        if any(isinstance(x, six.string_types) for x in keys):
             i2s, s2i = s2i, i2s
         for k in keys:
             i2s[k] = enum[k]
             s2i[enum[k]] = k
-    def any2i_one(self, pkt, x):
-        if type(x) is str:
-            x = self.s2i[x]
-        return x
-    def any2i(self, pkt, x):
-        if type(x) is list:
-            return map(lambda z,pkt=pkt:self.any2i_one(pkt,z), x)
-        else:
-            return self.any2i_one(pkt, x)        
-    def i2repr_one(self, pkt, x):
-        if x is not None:
-            r = self.i2s.get(x)
-            if r:
-                return r + " " + repr(x)
-        return repr(x)
+    def i2m(self, pkt, s):
+        if isinstance(s, str):
+            s = self.s2i.get(s)
+        return super(ASN1F_enum_INTEGER, self).i2m(pkt, s)
     def i2repr(self, pkt, x):
-        if type(x) is list:
-            return map(lambda z,pkt=pkt:self.i2repr_one(pkt, z), x)
-        else:
-            return self.i2repr_one(pkt, x)
+        if x is not None and isinstance(x, ASN1_INTEGER):
+            r = self.i2s.get(x.val)
+            if r:
+                return "'%s' %s" % (r, repr(x))
+        return repr(x)
 
 class ASN1F_BIT_STRING(ASN1F_field):
     ASN1_tag = ASN1_Class_UNIVERSAL.BIT_STRING
     def __init__(self, name, default, default_readable=True, context=None,
                  implicit_tag=None, explicit_tag=None):
         if default is not None and default_readable:
-            default = "".join(binrepr(ord(x)).zfill(8) for x in default)
+            default = b"".join(binrepr(orb(x)).zfill(8).encode("utf8") for x in default)
         ASN1F_field.__init__(self, name, default, context=context,
                              implicit_tag=implicit_tag,
                              explicit_tag=explicit_tag)
@@ -231,20 +226,30 @@ class ASN1F_ENUMERATED(ASN1F_enum_INTEGER):
 class ASN1F_UTF8_STRING(ASN1F_STRING):
     ASN1_tag = ASN1_Class_UNIVERSAL.UTF8_STRING
 
+class ASN1F_NUMERIC_STRING(ASN1F_STRING):
+    ASN1_tag = ASN1_Class_UNIVERSAL.NUMERIC_STRING
+
 class ASN1F_PRINTABLE_STRING(ASN1F_STRING):
     ASN1_tag = ASN1_Class_UNIVERSAL.PRINTABLE_STRING
 
 class ASN1F_T61_STRING(ASN1F_STRING):
     ASN1_tag = ASN1_Class_UNIVERSAL.T61_STRING
 
+class ASN1F_VIDEOTEX_STRING(ASN1F_STRING):
+    ASN1_tag = ASN1_Class_UNIVERSAL.VIDEOTEX_STRING
+
 class ASN1F_IA5_STRING(ASN1F_STRING):
     ASN1_tag = ASN1_Class_UNIVERSAL.IA5_STRING
    
 class ASN1F_UTC_TIME(ASN1F_STRING):
     ASN1_tag = ASN1_Class_UNIVERSAL.UTC_TIME
+    def randval(self):
+        return GeneralizedTime()
 
 class ASN1F_GENERALIZED_TIME(ASN1F_STRING):
     ASN1_tag = ASN1_Class_UNIVERSAL.GENERALIZED_TIME
+    def randval(self):
+        return GeneralizedTime()
 
 class ASN1F_ISO646_STRING(ASN1F_STRING):
     ASN1_tag = ASN1_Class_UNIVERSAL.ISO646_STRING
@@ -274,10 +279,7 @@ class ASN1F_SEQUENCE(ASN1F_field):
         default = [field.default for field in seq]
         for kwarg in ["context", "implicit_tag",
                       "explicit_tag", "flexible_tag"]:
-            if kwarg in kwargs:
-                setattr(self, kwarg, kwargs[kwarg])
-            else:
-                setattr(self, kwarg, None)
+            setattr(self, kwarg, kwargs.get(kwarg))
         ASN1F_field.__init__(self, name, default, context=self.context,
                              implicit_tag=self.implicit_tag,
                              explicit_tag=self.explicit_tag,
@@ -287,10 +289,7 @@ class ASN1F_SEQUENCE(ASN1F_field):
     def __repr__(self):
         return "<%s%r>" % (self.__class__.__name__, self.seq)
     def is_empty(self, pkt):
-        for f in self.seq:
-            if not f.is_empty(pkt):
-                return False
-        return True
+        return all(f.is_empty(pkt) for f in self.seq)
     def get_fields_list(self):
         return reduce(lambda x,y: x+y.get_fields_list(), self.seq, [])
     def m2i(self, pkt, s):
@@ -320,7 +319,7 @@ class ASN1F_SEQUENCE(ASN1F_field):
             for obj in self.seq:
                 try:
                     s = obj.dissect(pkt, s)
-                except ASN1F_badsequence,e:
+                except ASN1F_badsequence as e:
                     break
             if len(s) > 0:
                 raise BER_Decoding_Error("unexpected remainder", remaining=s)
@@ -329,7 +328,7 @@ class ASN1F_SEQUENCE(ASN1F_field):
         _,x = self.m2i(pkt, s)
         return x
     def build(self, pkt):
-        s = reduce(lambda x,y: x+y.build(pkt), self.seq, "")
+        s = reduce(lambda x,y: x+y.build(pkt), self.seq, b"")
         return self.i2m(pkt, s)
 
 class ASN1F_SET(ASN1F_SEQUENCE):
@@ -371,13 +370,13 @@ class ASN1F_SEQUENCE_OF(ASN1F_field):
         if isinstance(val, ASN1_Object) and val.tag==ASN1_Class_UNIVERSAL.RAW:
             s = val
         elif val is None:
-            s = ""
+            s = b""
         else:
-            s = "".join(map(str, val))
+            s = b"".join(raw(i) for i in val)
         return self.i2m(pkt, s)
 
     def randval(self):
-        return packet.fuzz(self.asn1pkt())
+        return packet.fuzz(self.cls())
     def __repr__(self):
         return "<%s %s>" % (self.__class__.__name__, self.name)
 
@@ -415,7 +414,7 @@ class ASN1F_optional(ASN1F_element):
             return s
     def build(self, pkt):
         if self._field.is_empty(pkt):
-            return ""
+            return b""
         return self._field.build(pkt)
     def any2i(self, pkt, x):
         return self._field.any2i(pkt, x)
@@ -436,10 +435,7 @@ class ASN1F_CHOICE(ASN1F_field):
             raise ASN1_Error(err_msg)
         self.implicit_tag = None
         for kwarg in ["context", "explicit_tag"]:
-            if kwarg in kwargs:
-                setattr(self, kwarg, kwargs[kwarg])
-            else:
-                setattr(self, kwarg, None)
+            setattr(self, kwarg, kwargs.get(kwarg))
         ASN1F_field.__init__(self, name, None, context=self.context,
                              explicit_tag=self.explicit_tag)
         self.default = default
@@ -449,12 +445,12 @@ class ASN1F_CHOICE(ASN1F_field):
         for p in args:
             if hasattr(p, "ASN1_root"):     # should be ASN1_Packet
                 if hasattr(p.ASN1_root, "choices"):
-                    for k,v in p.ASN1_root.choices.iteritems():
+                    for k,v in six.iteritems(p.ASN1_root.choices):
                         self.choices[k] = v         # ASN1F_CHOICE recursion
                 else:
                     self.choices[p.ASN1_root.network_tag] = p
             elif hasattr(p, "ASN1_tag"):
-                if type(p) is type:         # should be ASN1F_field class
+                if isinstance(p, type):         # should be ASN1F_field class
                     self.choices[p.ASN1_tag] = p
                 else:                       # should be ASN1F_PACKET instance
                     self.choices[p.network_tag] = p
@@ -479,25 +475,35 @@ class ASN1F_CHOICE(ASN1F_field):
         else:
             choice = self.choices[tag]
         if hasattr(choice, "ASN1_root"):
+            # we don't want to import ASN1_Packet in this module...
             return self.extract_packet(choice, s)
+        elif isinstance(choice, type):
+            #XXX find a way not to instantiate the ASN1F_field
+            return choice(self.name, b"").m2i(pkt, s)
         else:
-            if type(choice) is type:
-                return choice(self.name, "").m2i(pkt, s)
-            else:
-                # choice must be an ASN1F_PACKET instance here
-                return choice.m2i(pkt, s)
+            #XXX check properly if this is an ASN1F_PACKET
+            return choice.m2i(pkt, s)
     def i2m(self, pkt, x):
         if x is None:
-            s = ""
+            s = b""
         else:
-            s = str(x)
-        if hash(type(x)) in self.pktchoices:
-            imp, exp = self.pktchoices[hash(type(x))]
-            s = BER_tagging_enc(s, implicit_tag=imp,
-                                explicit_tag=exp)
+            s = raw(x)
+            if hash(type(x)) in self.pktchoices:
+                imp, exp = self.pktchoices[hash(type(x))]
+                s = BER_tagging_enc(s, implicit_tag=imp,
+                                    explicit_tag=exp)
         return BER_tagging_enc(s, explicit_tag=self.explicit_tag)
     def randval(self):
-        return RandChoice(*(packet.fuzz(x()) for x in self.choices.itervalues()))
+        randchoices = []
+        for p in six.itervalues(self.choices):
+            if hasattr(p, "ASN1_root"):   # should be ASN1_Packet class
+                randchoices.append(packet.fuzz(p()))
+            elif hasattr(p, "ASN1_tag"):
+                if isinstance(p, type):       # should be (basic) ASN1F_field class
+                    randchoices.append(p("dummy", None).randval())
+                else:                     # should be ASN1F_PACKET instance
+                    randchoices.append(p.randval())
+        return RandChoice(*randchoices)
 
 class ASN1F_PACKET(ASN1F_field):
     holds_packets = 1
@@ -524,11 +530,13 @@ class ASN1F_PACKET(ASN1F_field):
         return p,s
     def i2m(self, pkt, x):
         if x is None:
-            s = ""
+            s = b""
         else:
-            s = str(x)
+            s = raw(x)
         return BER_tagging_enc(s, implicit_tag=self.implicit_tag,
                                explicit_tag=self.explicit_tag)
+    def randval(self):
+        return packet.fuzz(self.cls())
 
 class ASN1F_BIT_STRING_ENCAPS(ASN1F_BIT_STRING):
     """
@@ -552,11 +560,8 @@ class ASN1F_BIT_STRING_ENCAPS(ASN1F_BIT_STRING):
             raise BER_Decoding_Error("unexpected remainder", remaining=s)
         return p, remain
     def i2m(self, pkt, x):
-        if x is None:
-            s = ""
-        else:
-            s = str(x)
-        s = "".join(binrepr(ord(x)).zfill(8) for x in s)
+        s = b"" if x is None else raw(x)
+        s = b"".join(binrepr(orb(x)).zfill(8).encode("utf8") for x in s)
         return ASN1F_BIT_STRING.i2m(self, pkt, s)
 
 class ASN1F_FLAGS(ASN1F_BIT_STRING):
@@ -570,11 +575,8 @@ class ASN1F_FLAGS(ASN1F_BIT_STRING):
                                   explicit_tag=explicit_tag)
     def get_flags(self, pkt):
         fbytes = getattr(pkt, self.name).val
-        flags = []
-        for i, positional in enumerate(fbytes):
-            if positional == '1' and i < len(self.mapping):
-                flags.append(self.mapping[i])
-        return flags
+        return [self.mapping[i] for i, positional in enumerate(fbytes)
+                if positional == '1' and i < len(self.mapping)]
     def i2repr(self, pkt, x):
         if x is not None:
             pretty_s = ", ".join(self.get_flags(pkt))

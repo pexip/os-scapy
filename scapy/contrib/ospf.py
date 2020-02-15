@@ -3,6 +3,20 @@
 # scapy.contrib.description = OSPF
 # scapy.contrib.status = loads
 
+# This file is part of Scapy
+# Scapy is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# any later version.
+#
+# Scapy is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Scapy. If not, see <http://www.gnu.org/licenses/>.
+
 """
 OSPF extension for Scapy <http://www.secdev.org/scapy>
 
@@ -11,16 +25,6 @@ routing protocol as defined in RFC 2328 and RFC 5340.
 
 Copyright (c) 2008 Dirk Loss  :  mail dirk-loss de
 Copyright (c) 2010 Jochen Bartl  :  jochen.bartl gmail com
-
-This program is free software; you can redistribute it and/or
-modify it under the terms of the GNU General Public License
-as published by the Free Software Foundation; either version 2
-of the License, or (at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
 """
 
 
@@ -28,6 +32,7 @@ from scapy.packet import *
 from scapy.fields import *
 from scapy.layers.inet import *
 from scapy.layers.inet6 import *
+from scapy.compat import orb
 
 EXT_VERSION = "v0.9.2"
 
@@ -36,9 +41,9 @@ class OSPFOptionsField(FlagsField):
 
     def __init__(self, name="options", default=0, size=8,
                  names=None):
-        FlagsField.__init__(self, name, default, size, names)
         if names is None:
             names = ["MT", "E", "MC", "NP", "L", "DC", "O", "DN"]
+        FlagsField.__init__(self, name, default, size, names)
 
 
 _OSPF_types = {1: "Hello",
@@ -48,12 +53,24 @@ _OSPF_types = {1: "Hello",
                5: "LSAck"}
 
 
+class _NoLLSLenField(LenField):
+    """
+    LenField that will ignore the size of OSPF_LLS_Hdr if it exists
+    in the payload
+    """
+    def i2m(self, pkt, x):
+        if x is None:
+            x = self.adjust(len(pkt.payload))
+        if OSPF_LLS_Hdr in pkt:
+            x -= len(pkt[OSPF_LLS_Hdr])
+        return x
+
 class OSPF_Hdr(Packet):
     name = "OSPF Header"
     fields_desc = [
                     ByteField("version", 2),
                     ByteEnumField("type", 1, _OSPF_types),
-                    ShortField("len", None),
+                    _NoLLSLenField("len", None, adjust=lambda x: x+24),
                     IPField("src", "1.1.1.1"),
                     IPField("area", "0.0.0.0"), # default: backbone
                     XShortField("chksum", None),
@@ -69,15 +86,8 @@ class OSPF_Hdr(Packet):
                     ]
 
     def post_build(self, p, pay):
-        # TODO: Remove LLS data from pay
-        # LLS data blocks may be attached to OSPF Hello and DD packets
-        # The length of the LLS block shall not be included into the length of OSPF packet
         # See <http://tools.ietf.org/html/rfc5613>
         p += pay
-        l = self.len
-        if l is None:
-            l = len(p)
-            p = p[:2] + struct.pack("!H", l) + p[4:]
         if self.chksum is None:
             if self.authtype == 2:
                 ck = 0   # Crypto, see RFC 2328, D.4.3
@@ -85,7 +95,7 @@ class OSPF_Hdr(Packet):
                 # Checksum is calculated without authentication data
                 # Algorithm is the same as in IP()
                 ck = checksum(p[:16] + p[24:])
-                p = p[:12] + chr(ck >> 8) + chr(ck & 0xff) + p[14:]
+                p = p[:12] + struct.pack("!H", ck) + p[14:]
             # TODO: Handle Crypto: Add message digest  (RFC 2328, D.4.3)
         return p
 
@@ -109,7 +119,7 @@ class OSPF_Hello(Packet):
                    IntField("deadinterval", 40),
                    IPField("router", "0.0.0.0"),
                    IPField("backup", "0.0.0.0"),
-                   FieldListField("neighbors", [], IPField("", "0.0.0.0"), length_from=lambda pkt: (pkt.underlayer.len - 44))]
+                   FieldListField("neighbors", [], IPField("", "0.0.0.0"), length_from=lambda pkt: (pkt.underlayer.len - 44) if pkt.underlayer else None)]
 
     def guess_payload_class(self, payload):
         # check presence of LLS data block flag
@@ -121,47 +131,26 @@ class OSPF_Hello(Packet):
 
 class LLS_Generic_TLV(Packet):
     name = "LLS Generic"
-    fields_desc = [ShortField("type", 1),
-                   FieldLenField("len", None, length_of=lambda x: x.val),
+    fields_desc = [ShortField("type", 0),
+                   FieldLenField("len", None, length_of="val"),
                    StrLenField("val", "", length_from=lambda x: x.len)]
 
     def guess_payload_class(self, p):
         return conf.padding_layer
 
-
-class LLS_ExtendedOptionsField(FlagsField):
-
-    def __init__(self, name="options", default=0, size=32,
-                 names=None):
-        FlagsField.__init__(self, name, default, size, names)
-        if names is None:
-            names = ["LR", "RS"]
-
-
 class LLS_Extended_Options(LLS_Generic_TLV):
     name = "LLS Extended Options and Flags"
     fields_desc = [ShortField("type", 1),
-                   ShortField("len", 4),
-                   LLS_ExtendedOptionsField()]
-
+                   FieldLenField("len", None, fmt="!H", length_of="options"),
+                   StrLenField("options", "", length_from=lambda x: x.len)]
+                 # TODO: FlagsField("options", 0, names=["LR", "RS"], size) with dynamic size
 
 class LLS_Crypto_Auth(LLS_Generic_TLV):
     name = "LLS Cryptographic Authentication"
     fields_desc = [ShortField("type", 2),
-                   FieldLenField("len", 20, fmt="B", length_of=lambda x: x.authdata),
-                   XIntField("sequence", "\x00\x00\x00\x00"),
-                   StrLenField("authdata", "\x00" * 16, length_from=lambda x: x.len)]
-
-    def post_build(self, p, pay):
-        p += pay
-        l = self.len
-
-        if l is None:
-            # length = len(sequence) + len(authdata) + len(payload)
-            l = len(p[3:])
-            p = p[:2] + struct.pack("!H", l) + p[3:]
-
-        return p
+                   FieldLenField("len", 20, fmt="B", length_of=lambda x: x.authdata + 4),
+                   XIntField("sequence", 0),
+                   StrLenField("authdata", b"\x00" * 16, length_from=lambda x: x.len - 4)]
 
 _OSPF_LLSclasses = {1: "LLS_Extended_Options",
                     2: "LLS_Crypto_Auth"}
@@ -171,30 +160,27 @@ def _LLSGuessPayloadClass(p, **kargs):
     """ Guess the correct LLS class for a given payload """
 
     cls = conf.raw_layer
-    if len(p) >= 4:
+    if len(p) >= 3:
         typ = struct.unpack("!H", p[0:2])[0]
         clsname = _OSPF_LLSclasses.get(typ, "LLS_Generic_TLV")
         cls = globals()[clsname]
     return cls(p, **kargs)
 
+class FieldLenField32Bits(FieldLenField):
+    def i2repr(self, pkt, x):
+        return repr(x) if not x else str(FieldLenField.i2h(self, pkt, x) << 2) + " bytes"
 
 class OSPF_LLS_Hdr(Packet):
     name = "OSPF Link-local signaling"
     fields_desc = [XShortField("chksum", None),
-                   # FIXME Length should be displayed in 32-bit words
-                   ShortField("len", None),
-                   PacketListField("llstlv", [], _LLSGuessPayloadClass)]
+                   FieldLenField32Bits("len", None, length_of="llstlv", adjust=lambda pkt, x: (x + 4) >> 2),
+                   PacketListField("llstlv", [], _LLSGuessPayloadClass, length_from=lambda x: (x.len << 2) - 4)]
 
     def post_build(self, p, pay):
         p += pay
-        l = self.len
-        if l is None:
-            # Length in 32-bit words
-            l = len(p) / 4
-            p = p[:2] + struct.pack("!H", l) + p[4:]
         if self.chksum is None:
             c = checksum(p)
-            p = chr((c >> 8) & 0xff) + chr(c & 0xff) + p[2:]
+            p = struct.pack("!H", c) + p[2:]
         return p
 
 _OSPF_LStypes = {1: "router",
@@ -213,7 +199,7 @@ _OSPF_LSclasses = {1: "OSPF_Router_LSA",
 
 
 def ospf_lsa_checksum(lsa):
-    return fletcher16_checkbytes("\x00\x00" + lsa[2:], 16) # leave out age
+    return fletcher16_checkbytes(b"\x00\x00" + lsa[2:], 16) # leave out age
 
 
 class OSPF_LSA_Hdr(Packet):
@@ -256,10 +242,10 @@ class OSPF_Link(Packet):
 def _LSAGuessPayloadClass(p, **kargs):
     """ Guess the correct LSA class for a given payload """
     # This is heavily based on scapy-cdp.py by Nicolas Bareil and Arnaud Ebalard
-    # XXX: This only works if all payload
+    
     cls = conf.raw_layer
     if len(p) >= 4:
-        typ = struct.unpack("!B", p[3])[0]
+        typ = orb(p[3])
         clsname = _OSPF_LSclasses.get(typ, "Raw")
         cls = globals()[clsname]
     return cls(p, **kargs)
@@ -406,7 +392,7 @@ class OSPF_LSReq(Packet):
 class OSPF_LSUpd(Packet):
     name = "OSPF Link State Update"
     fields_desc = [FieldLenField("lsacount", None, fmt="!I", count_of="lsalist"),
-                   PacketListField("lsalist", [], _LSAGuessPayloadClass,
+                   PacketListField("lsalist", None, _LSAGuessPayloadClass,
                                 count_from = lambda pkt: pkt.lsacount,
                                 length_from = lambda pkt: pkt.underlayer.len - 24)]
 
@@ -451,7 +437,7 @@ class OSPFv3_Hdr(Packet):
 
         if self.chksum is None:
             chksum = in6_chksum(89, self.underlayer, p)
-            p = p[:12] + chr(chksum >> 8) + chr(chksum & 0xff) + p[14:]
+            p = p[:12] + struct.pack("!H", chksum) + p[14:]
 
         return p
 
@@ -460,9 +446,9 @@ class OSPFv3OptionsField(FlagsField):
 
     def __init__(self, name="options", default=0, size=24,
                  names=None):
-        FlagsField.__init__(self, name, default, size, names)
         if names is None:
             names = ["V6", "E", "MC", "N", "R", "DC", "AF", "L", "I", "F"]
+        FlagsField.__init__(self, name, default, size, names)
 
 
 class OSPFv3_Hello(Packet):
@@ -577,9 +563,9 @@ class OSPFv3PrefixOptionsField(FlagsField):
 
     def __init__(self, name="prefixoptions", default=0, size=8,
                  names=None):
-        FlagsField.__init__(self, name, default, size, names)
         if names is None:
             names = ["NU", "LA", "MC", "P"]
+        FlagsField.__init__(self, name, default, size, names)
 
 
 class OSPFv3_Inter_Area_Prefix_LSA(OSPF_BaseLSA):

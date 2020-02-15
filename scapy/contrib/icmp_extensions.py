@@ -1,10 +1,31 @@
+#! /usr/bin/env python
+
+# This file is part of Scapy
+# Scapy is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# any later version.
+#
+# Scapy is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Scapy. If not, see <http://www.gnu.org/licenses/>.
+
+# scapy.contrib.description = ICMP Extensions
+# scapy.contrib.status = loads
+
+from __future__ import absolute_import
 import scapy
 from scapy.packet import Packet, bind_layers
 from scapy.fields import *
 from scapy.layers.inet import IP, ICMP
 from scapy.layers.inet6 import IP6Field
-from scapy.utils import warning
+from scapy.error import warning
 from scapy.contrib.mpls import MPLS
+import scapy.modules.six as six
 
 
 class ICMPExtensionObject(Packet):
@@ -45,12 +66,8 @@ class ICMPExtensionHeader(Packet):
             return Packet.guess_payload_class(self, payload)
 
         for fval, cls in self.payload_guess:
-            ok = 1
-            for k, v in fval.iteritems():
-                if not hasattr(ieo, k) or v != ieo.getfieldval(k):
-                    ok = 0
-                    break
-            if ok:
+            if all(hasattr(ieo, k) and v == ieo.getfieldval(k)
+                   for k, v in six.iteritems(fval)):
                 return cls
         return ICMPExtensionObject
 

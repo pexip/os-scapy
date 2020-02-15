@@ -10,7 +10,7 @@ Simple example
 ==============
 
 A layer is a subclass of the ``Packet`` class. All the logic behind layer manipulation 
-is hold by the ``Packet`` class and will be inherited. 
+is held by the ``Packet`` class and will be inherited. 
 A simple layer is compounded by a list of fields that will be either concatenated 
 when assembling the layer or dissected one by one when disassembling a string. 
 The list of fields is held in an attribute named ``fields_desc``. Each field is an instance 
@@ -23,11 +23,11 @@ of a field class::
                      IntEnumField("donald" , 1 , 
                           { 1: "happy", 2: "cool" , 3: "angry" } ) ]
                        
-In this example, our layer has three fields. The first one is an 2 byte integer 
-field named ``mickey`` and whose default value is 5. The second one is a 1 byte 
+In this example, our layer has three fields. The first one is a 2-byte integer 
+field named ``mickey`` and whose default value is 5. The second one is a 1-byte 
 integer field named ``minnie`` and whose default value is 3. The difference between 
-a vanilla ``ByteField`` and a ``XByteField`` is only the fact that the preferred human 
-representation of the field’s value is in hexadecimal. The last field is a 4 byte 
+a vanilla ``ByteField`` and an ``XByteField`` is only the fact that the preferred human 
+representation of the field’s value is in hexadecimal. The last field is a 4-byte 
 integer field named ``donald``. It is different from a vanilla ``IntField`` by the fact 
 that some of the possible values of the field have literate representations. For 
 example, if it is worth 3, the value will be displayed as angry. Moreover, if the 
@@ -47,7 +47,7 @@ If your protocol is as simple as this, it is ready to use::
     minnie= 0x3 
     donald= happy 
     >>> d.donald="cool" 
-    >>> str(d) 
+    >>> raw(d)
     ’\x00\x01\x03\x00\x00\x00\x02’ 
     >>> Disney( ) 
     <Disney mickey=1 minnie=0x3 donald=cool |> 
@@ -123,7 +123,7 @@ The main  mechanism  is based on  the ``Field`` structure.  Always keep in
 mind that a layer is just a little more than a list of fields, but not
 much more. 
 
-So, to understanding how layers are working, one needs to look quickly
+So, to understand how layers are working, one needs to look quickly
 at how the fields are handled.
 
 
@@ -143,7 +143,7 @@ A field should be considered in different states:
 - ``h`` (uman) : how the packet is displayed to our human eyes.
 
 This explains  the mysterious  methods ``i2h()``, ``i2m()``,  ``m2i()`` and  so on
-available  in  each field:  they are conversion  from one  state  to
+available  in  each field:  they are the conversion  from one  state  to
 another, adapted to a specific use.
 
 Other special functions:
@@ -178,7 +178,7 @@ When defining your own layer, you usually just need to define some
 Example: variable length quantities
 -----------------------------------
 
-There is way to represent integers on a variable length quantity often
+There is a way to represent integers on a variable length quantity often
 used in  protocols, for instance  when dealing with  signal processing
 (e.g. MIDI). 
 
@@ -193,7 +193,7 @@ last byte. For instance, 0x123456 will be coded as 0xC8E856::
             s.append( hex(0x80 | (l & 0x7F) ) )
             l = l >> 7
         s.reverse()
-        return "".join(map( lambda(x) : chr(int(x, 16)) , s))
+        return "".join(chr(int(x, 16)) for x in s)
     
     def str2vlenq(s=""):
         i = l = 0
@@ -208,7 +208,7 @@ last byte. For instance, 0x123456 will be coded as 0xC8E856::
     
         return s[i+1:], l
 
-We will  define a field which  computes automatically the  length of a
+We will  define a field which  computes automatically the  length of an
 associated string, but used that encoding format::
 
     class VarLenQField(Field):
@@ -223,7 +223,7 @@ associated string, but used that encoding format::
                 f = pkt.get_field(self.fld)
                 x = f.i2len(pkt, pkt.getfieldval(self.fld))
                 x = vlenq2str(x)
-            return str(x)
+            return raw(x)
     
         def m2i(self, pkt, x):
             if s is None:
@@ -262,7 +262,7 @@ The method ``show2()`` displays the  fields with their values as they will
 be sent to the network, but in a human readable way, so we see ``len=129``.
 Last but not least, let us look now at the machine representation::
 
-    >>> str(f)
+    >>> raw(f)
     '\x81\x01AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 
 The first 2 bytes are ``\x81\x01``, which is 129 in this encoding.
@@ -274,7 +274,7 @@ Dissecting
 .. index::
    dissecting
    
-Layers are  only list  of fields,  but what is  the glue  between each
+Layers only are list of fields, but what is the glue between each
 field, and after, between each  layer. These are the mysteries explain
 in this section.
 
@@ -385,9 +385,16 @@ Hence, we need now to understand how layers are bound together.
 Binding layers
 --------------
 
-One of the cool features with  Scapy when dissecting layers is that is
-try to guess for us what the next layer is. The official way to link 2
-layers is using ``bind_layers()``:
+One of the cool features with Scapy when dissecting layers is that it
+tries to guess for us what the next layer is. The official way to link 2
+layers is using ``bind_layers()`` function.
+
+Available inside the ``packet`` module, this function can be used as following::
+
+    bind_layers(ProtoA, ProtoB, FieldToBind=Value)
+
+Each time a packet ``ProtoA()/ProtoB()`` will be created, the ``FieldToBind`` of
+``ProtoA`` will be equal to ``Value``.
 
 For instance,  if you have a class ``HTTP``, you may expect  that all the
 packets coming from or going to  port 80 will be decoded as such. This
@@ -404,7 +411,7 @@ The ``guess_payload_class()`` way
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Sometimes,  guessing the payload  class is  not as  straightforward as
-defining a single  port. For instance, it can depends on  a value of a
+defining a single  port. For instance, it can depend on  a value of a
 given byte in the current layer. The 2 needed methods are:
 
 - ``guess_payload_class()`` which must return  the guessed class for the
@@ -492,14 +499,14 @@ magic happens to glue everything. Let's do magic then.
 The basic stuff
 ---------------
 
-First thing to  establish: what does "build" mean? As  we have seen, a
+The first thing to establish is: what does "build" mean? As we have seen, a
 layer  can   be  represented  in  different   ways  (human,  internal,
 machine). Building means going to the machine format.
 
-Second thing to  understand is ''when'' a layer is  built. Answer is not
+The second thing to understand is ''when'' a layer is  built. The answer is not
 that obvious, but as soon  as you need the machine representation, the
 layers are built: when the packet is dropped on the network or written
-to a  file, when it  is converted as  a string, ...  In  fact, machine
+to a file, or when it is converted as a string, ...  In  fact, machine
 representation  should be  regarded as  a big  string with  the layers
 appended altogether.
  
@@ -511,18 +518,19 @@ appended altogether.
     0010 7F 00 00 01 00 14 00 50 00 00 00 00 00 00 00 00 .......P........ 
     0020 50 02 20 00 91 7C 00 00 P. ..|.. 
 
-Calling ``str()`` builds the packet:
+Calling ``raw()`` builds the packet:
   - non instanced fields are set to their default value
   - lengths are updated automatically
   - checksums are computed
   - and so on. 
 
-In fact, using ``str()`` rather than  ``show2()`` or any other method is not a
-random  choice  as  all   the  functions  building  the  packet  calls
-``Packet.__str__()``. However, ``__str__()`` calls another method: ``build()``::
+In fact, using ``raw()`` rather than ``show2()`` or any other method
+is not a random choice as all the functions building the packet calls
+``Packet.__str__()`` (or ``Packet.__bytes__()`` under Python
+3). However, ``__str__()`` calls another method: ``build()``::
 
     def __str__(self):
-        return self.__iter__().next().build()
+        return next(iter(self)).build()
 
 What is important also to understand  is that usually, you do not care
 about the machine  representation, that is why the  human and internal
@@ -574,7 +582,7 @@ However, things  are more complicated if  ``val`` is not set,  it means no
 default  value was  provided  earlier,  and thus  the  field needs  to
 compute some "stuff" right now or later. 
 
-"Right now"  means thanks  to ``i2m()``, if  all pieces of  information is
+"Right now"  means thanks to ``i2m()``, if all pieces of information are
 available.  For instance,  if  you have  to  handle a  length until  a
 certain delimiter. 
 
@@ -661,7 +669,7 @@ in ``post_build()``.
 
 ``len`` is correctly computed now::
 
-    >>> hexdump(str(p))
+    >>> hexdump(raw(p))
     0000   00 32 30 0D 0A 58 58 58  58 58 58 58 58 58 58 58   .20..XXXXXXXXXXX
     0010   58 58 58 58 58 58 58 58  58 58 58 58 58 58 58 58   XXXXXXXXXXXXXXXX
     0020   58 58 58 58 58                                     XXXXX
@@ -734,9 +742,8 @@ structurally different, but holding the same values)::
         elif type(other) is str:
             return self/Raw(load=other)
 
-The right  hand side of the  operator becomes the payload  of the left
-hand    side.    This    is    performed   through    the   call    to
-``add_payload()``. Finally, the new packet is returned.
+The right-hand side of the operator becomes the payload of the left-hand
+side. This is performed through the call to ``add_payload()``. Finally, the new packet is returned.
 
 Note: we can observe that if  other isn't a ``Packet`` but a string,
 the ``Raw``  class is instantiated to  form the payload.  Like in this
@@ -746,18 +753,18 @@ example::
     <IP  |<Raw  load='AAAA' |>>
 
 Well, what  ``add_payload()`` should implement? Just  a link between
-two packets? Not only, in  our case this method will appropriately set
+two packets? Not only, in our case, this method will appropriately set
 the correct value to ``type``.
 
 Instinctively  we feel that  the upper  layer (the  right of  '/') can
 gather the  values to set the fields  to the lower layer  (the left of
 '/').  Like  previously explained, there is a  convenient mechanism to
-specify  the  bindings in  both  directions  between two  neighbouring
+specify the bindings in  both directions between two neighboring
 layers.
 
-Once again, these information must be provided to ``bind_layers()``,
+Once again, these informations must be provided to ``bind_layers()``,
 which  will   internally  call  ``bind_top_down()``   in  charge  to
-aggregate the fields to overload. In our case what we needs to specify
+aggregate the fields to overload. In our case what we need to specify
 is::
 
     bind_layers( Foo, Bar1, {'type':1} )
@@ -780,7 +787,7 @@ The fields are dispatched between three dictionaries:
     are initialized according to ``fields_desc`` by the constructor 
     by calling ``init_fields()`` ).
 
-In the following code we can observe how a field is selected and its
+In the following code, we can observe how a field is selected and its
 value returned::
 
     def getfieldval(self, attr):
@@ -819,7 +826,7 @@ Under the hood: putting everything together
 Last but not least, it is very useful to understand when each function
 is called when a packet is built::
 
-    >>> hexdump(str(p))
+    >>> hexdump(raw(p))
     Packet.str=Foo
     Packet.iter=Foo
     Packet.iter=Bar1
@@ -868,7 +875,8 @@ Legend:
     LESignedIntField
     XIntField
     
-    LongField       
+    LongField
+    LELongField
     XLongField
     LELongField
     
@@ -947,7 +955,7 @@ Problems arise when you realize that the relation between lenfield and varfield 
 The length field
 ~~~~~~~~~~~~~~~~
 
-First, a lenfield is declared using ``FieldLenField`` (or a derivate). If its value is None when assembling a packet, its value will be deduced from the varfield that was referenced. The reference is done using either the ``length_of`` parameter or the ``count_of`` parameter. The ``count_of`` parameter has a meaning only when varfield is a field that holds a list (``PacketListField`` or ``FieldListField``). The value will be the name of the varfield, as a string. According to which parameter is used the ``i2len()`` or ``i2count()`` method will be called on the varfield value. The returned value will the be adjusted by the function provided in the adjust parameter. adjust will be applied on 2 arguments: the packet instance and the value returned by ``i2len()`` or ``i2count()``. By default, adjust does nothing::
+First, a lenfield is declared using ``FieldLenField`` (or a derivate). If its value is None when assembling a packet, its value will be deduced from the varfield that was referenced. The reference is done using either the ``length_of`` parameter or the ``count_of`` parameter. The ``count_of`` parameter has a meaning only when varfield is a field that holds a list (``PacketListField`` or ``FieldListField``). The value will be the name of the varfield, as a string. According to which parameter is used the ``i2len()`` or ``i2count()`` method will be called on the varfield value. The returned value will the be adjusted by the function provided in the adjust parameter. adjust will be applied to 2 arguments: the packet instance and the value returned by ``i2len()`` or ``i2count()``. By default, adjust does nothing::
 
     adjust=lambda pkt,x: x
 

@@ -1,5 +1,19 @@
 #!/usr/bin/env python
 
+# This file is part of Scapy
+# Scapy is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# any later version.
+#
+# Scapy is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Scapy. If not, see <http://www.gnu.org/licenses/>.
+
 # scapy.contrib.description = EIGRP
 # scapy.contrib.status = loads
 
@@ -11,16 +25,6 @@
     :copyright: 2009 by Jochen Bartl
     :e-mail:    lobo@c3a.de / jochen.bartl@gmail.com
     :license:   GPL v2
-
-        This program is free software; you can redistribute it and/or
-        modify it under the terms of the GNU General Public License
-        as published by the Free Software Foundation; either version 2
-        of the License, or (at your option) any later version.
-
-        This program is distributed in the hope that it will be useful,
-        but WITHOUT ANY WARRANTY; without even the implied warranty of
-        MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-        GNU General Public License for more details.
 
     :TODO
 
@@ -39,10 +43,12 @@
     - IOS / EIGRP Version Representation FIX by Dirk Loss
 """
 
+from __future__ import absolute_import
 from scapy.packet import *
 from scapy.fields import *
 from scapy.layers.inet import IP
 from scapy.layers.inet6 import *
+from scapy.compat import chb, raw
 
 class EigrpIPField(StrField, IPField):
     """
@@ -80,11 +86,11 @@ class EigrpIPField(StrField, IPField):
         l = self.length_from(pkt)
 
         if l <= 8:
-            x += "\x00\x00\x00"
+            x += b"\x00\x00\x00"
         elif l <= 16:
-            x += "\x00\x00"
+            x += b"\x00\x00"
         elif l <= 24:
-            x += "\x00"
+            x += b"\x00"
 
         return inet_ntoa(x)
 
@@ -151,13 +157,13 @@ class EigrpIP6Field(StrField, IP6Field):
         if l > 128:
             warning("EigrpIP6Field: Prefix length is > 128. Dissection of this packet will fail")
         else:
-            pad = "\x00" * (16 - prefixlen)
+            pad = b"\x00" * (16 - prefixlen)
             x += pad
 
         return inet_ntop(socket.AF_INET6, x)
 
     def prefixlen_to_bytelen(self, l):
-        l = l / 8
+        l = l // 8
 
         if l < 16:
             l += 1
@@ -181,7 +187,7 @@ class EIGRPGeneric(Packet):
     name = "EIGRP Generic TLV"
     fields_desc = [ XShortField("type", 0x0000),
             FieldLenField("len", None, "value", "!H", adjust=lambda pkt,x: x + 4),
-            StrLenField("value", "\x00", length_from=lambda pkt: pkt.len - 4)]
+            StrLenField("value", b"\x00", length_from=lambda pkt: pkt.len - 4)]
 
     def guess_payload_class(self, p):
         return conf.padding_layer
@@ -211,7 +217,7 @@ class EIGRPAuthData(EIGRPGeneric):
             ShortEnumField("authtype", 2, {2 : "MD5"}),
             ShortField("keysize", None),
             IntField("keyid", 1),
-            StrFixedLenField("nullpad", "\x00" * 12, 12),
+            StrFixedLenField("nullpad", b"\x00" * 12, 12),
             StrLenField("authdata", RandString(16), length_from=lambda pkt: pkt.keysize)
             ]
 
@@ -220,7 +226,7 @@ class EIGRPAuthData(EIGRPGeneric):
 
         if self.keysize is None:
             keysize = len(self.authdata)
-            p = p[:6] + chr((keysize >> 8) & 0xff) + chr(keysize & 0xff) + p[8:]
+            p = p[:6] + chb((keysize >> 8) & 0xff) + chb(keysize & 0xff) + p[8:]
 
         return p
 
@@ -240,7 +246,7 @@ class EIGRPSeq(EIGRPGeneric):
 
         if self.len is None:
             l = len(p)
-            p = p[:2] + chr((l >> 8) & 0xff) + chr(l & 0xff) + p[4:]
+            p = p[:2] + chb((l >> 8) & 0xff) + chb(l & 0xff) + p[4:]
 
         return p
 
@@ -261,13 +267,13 @@ class ShortVersionField(ShortField):
            Valid numbers are between 0 and 255.
         """
 
-        if type(x) is str and x.startswith("v") and len(x) <= 8:
+        if isinstance(x, str) and x.startswith("v") and len(x) <= 8:
             major = int(x.split(".")[0][1:])
             minor = int(x.split(".")[1])
 
             return (major << 8) | minor
 
-        elif type(x) is int and 0 <= x <= 65535:
+        elif isinstance(x, int) and 0 <= x <= 65535:
             return x
         else:
             if self.default != None:
@@ -426,12 +432,12 @@ class RepeatedTlvListField(PacketListField):
                 remain = pad.load
                 del(pad.underlayer.payload)
             else:
-                remain = ""
+                remain = b""
             lst.append(p)
         return remain,lst
 
     def addfield(self, pkt, s, val):
-        return s + reduce(str.__add__, map(str, val), "")
+        return s + b"".join(raw(v) for v in val)
 
 def _EIGRPGuessPayloadClass(p, **kargs):
     cls = conf.raw_layer
@@ -439,7 +445,7 @@ def _EIGRPGuessPayloadClass(p, **kargs):
         t = struct.unpack("!H", p[:2])[0]
         clsname = _eigrp_tlv_cls.get(t, "EIGRPGeneric")
         cls = globals()[clsname]
-	return cls(p, **kargs)
+    return cls(p, **kargs)
 
 _EIGRP_OPCODES = { 1 : "Update",
                    2 : "Request",
@@ -471,7 +477,7 @@ class EIGRP(Packet):
         p += pay
         if self.chksum is None:
             c = checksum(p)
-            p = p[:2] + chr((c >> 8) & 0xff) + chr(c & 0xff) + p[4:]
+            p = p[:2] + chb((c >> 8) & 0xff) + chb(c & 0xff) + p[4:]
         return p
 
     def mysummary(self):

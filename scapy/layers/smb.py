@@ -15,7 +15,7 @@ from scapy.layers.netbios import NBTSession
 # SMB NetLogon Response Header
 class SMBNetlogon_Protocol_Response_Header(Packet):
     name="SMBNetlogon Protocol Response Header"
-    fields_desc = [StrFixedLenField("Start","\xffSMB",4),
+    fields_desc = [StrFixedLenField("Start",b"\xffSMB",4),
                    ByteEnumField("Command",0x25,{0x25:"Trans"}),
                    ByteField("Error_Class",0x02),
                    ByteField("Reserved",0),
@@ -55,7 +55,7 @@ class SMBMailSlot(Packet):
                    LEShortField("priority", 1),
                    LEShortField("class", 2),
                    LEShortField("size", 135),
-                   StrNullField("name","\MAILSLOT\NET\GETDC660")]
+                   StrNullField("name","\\MAILSLOT\\NET\\GETDC660")]
 
 # SMB NetLogon Protocol Response Tail SAM
 class SMBNetlogon_Protocol_Response_Tail_SAM(Packet):
@@ -113,7 +113,7 @@ class SMBNetlogon_Protocol_Response_Tail_LM20(Packet):
 # SMBNegociate Protocol Request Header
 class SMBNegociate_Protocol_Request_Header(Packet):
     name="SMBNegociate Protocol Request Header"
-    fields_desc = [StrFixedLenField("Start","\xffSMB",4),
+    fields_desc = [StrFixedLenField("Start",b"\xffSMB",4),
                    ByteEnumField("Command",0x72,{0x72:"SMB_COM_NEGOTIATE"}),
                    ByteField("Error_Class",0),
                    ByteField("Reserved",0),
@@ -139,7 +139,7 @@ class SMBNegociate_Protocol_Request_Tail(Packet):
 # SMBNegociate Protocol Response Advanced Security
 class SMBNegociate_Protocol_Response_Advanced_Security(Packet):
     name="SMBNegociate Protocol Response Advanced Security"
-    fields_desc = [StrFixedLenField("Start","\xffSMB",4),
+    fields_desc = [StrFixedLenField("Start",b"\xffSMB",4),
                    ByteEnumField("Command",0x72,{0x72:"SMB_COM_NEGOTIATE"}),
                    ByteField("Error_Class",0),
                    ByteField("Reserved",0),
@@ -168,7 +168,7 @@ class SMBNegociate_Protocol_Response_Advanced_Security(Packet):
                    BitField("CompBulk",0,2),
                    BitField("Reserved3",0,5),
 # There have been 127490112000000000 tenths of micro-seconds between 1st january 1601 and 1st january 2005. 127490112000000000=0x1C4EF94D6228000, so ServerTimeHigh=0xD6228000 and ServerTimeLow=0x1C4EF94.
-                   LEIntField("ServerTimeHigh",0xD6228000L),
+                   LEIntField("ServerTimeHigh",0xD6228000),
                    LEIntField("ServerTimeLow",0x1C4EF94),
                    LEShortField("ServerTimeZone",0x3c),
                    ByteField("EncryptionKeyLength",0),
@@ -180,7 +180,7 @@ class SMBNegociate_Protocol_Response_Advanced_Security(Packet):
 # When using no security, with EncryptionKeyLength=8, you must have an EncryptionKey before the DomainName
 class SMBNegociate_Protocol_Response_No_Security(Packet):
     name="SMBNegociate Protocol Response No Security"
-    fields_desc = [StrFixedLenField("Start","\xffSMB",4),
+    fields_desc = [StrFixedLenField("Start",b"\xffSMB",4),
                    ByteEnumField("Command",0x72,{0x72:"SMB_COM_NEGOTIATE"}),
                    ByteField("Error_Class",0),
                    ByteField("Reserved",0),
@@ -209,7 +209,7 @@ class SMBNegociate_Protocol_Response_No_Security(Packet):
                    FlagsField("CompBulk",0,2,"CB"),
                    BitField("Reserved3",0,5),
                    # There have been 127490112000000000 tenths of micro-seconds between 1st january 1601 and 1st january 2005. 127490112000000000=0x1C4EF94D6228000, so ServerTimeHigh=0xD6228000 and ServerTimeLow=0x1C4EF94.
-                   LEIntField("ServerTimeHigh",0xD6228000L),
+                   LEIntField("ServerTimeHigh",0xD6228000),
                    LEIntField("ServerTimeLow",0x1C4EF94),
                    LEShortField("ServerTimeZone",0x3c),
                    ByteField("EncryptionKeyLength",8),
@@ -221,7 +221,7 @@ class SMBNegociate_Protocol_Response_No_Security(Packet):
 # SMBNegociate Protocol Response No Security No Key
 class SMBNegociate_Protocol_Response_No_Security_No_Key(Packet):
     namez="SMBNegociate Protocol Response No Security No Key"
-    fields_desc = [StrFixedLenField("Start","\xffSMB",4),
+    fields_desc = [StrFixedLenField("Start",b"\xffSMB",4),
                    ByteEnumField("Command",0x72,{0x72:"SMB_COM_NEGOTIATE"}),
                    ByteField("Error_Class",0),
                    ByteField("Reserved",0),
@@ -250,7 +250,7 @@ class SMBNegociate_Protocol_Response_No_Security_No_Key(Packet):
                    FlagsField("CompBulk",0,2,"CB"),
                    BitField("Reserved3",0,5),
                    # There have been 127490112000000000 tenths of micro-seconds between 1st january 1601 and 1st january 2005. 127490112000000000=0x1C4EF94D6228000, so ServerTimeHigh=0xD6228000 and ServerTimeLow=0x1C4EF94.
-                   LEIntField("ServerTimeHigh",0xD6228000L),
+                   LEIntField("ServerTimeHigh",0xD6228000),
                    LEIntField("ServerTimeLow",0x1C4EF94),
                    LEShortField("ServerTimeZone",0x3c),
                    ByteField("EncryptionKeyLength",0),
@@ -261,7 +261,7 @@ class SMBNegociate_Protocol_Response_No_Security_No_Key(Packet):
 # Session Setup AndX Request
 class SMBSession_Setup_AndX_Request(Packet):
     name="Session Setup AndX Request"
-    fields_desc=[StrFixedLenField("Start","\xffSMB",4),
+    fields_desc=[StrFixedLenField("Start",b"\xffSMB",4),
                 ByteEnumField("Command",0x73,{0x73:"SMB_COM_SESSION_SETUP_ANDX"}),
                  ByteField("Error_Class",0),
                  ByteField("Reserved",0),
@@ -312,7 +312,7 @@ class SMBSession_Setup_AndX_Request(Packet):
 # Session Setup AndX Response
 class SMBSession_Setup_AndX_Response(Packet):
     name="Session Setup AndX Response"
-    fields_desc=[StrFixedLenField("Start","\xffSMB",4),
+    fields_desc=[StrFixedLenField("Start",b"\xffSMB",4),
                  ByteEnumField("Command",0x73,{0x73:"SMB_COM_SESSION_SETUP_ANDX"}),
                  ByteField("Error_Class",0),
                  ByteField("Reserved",0),

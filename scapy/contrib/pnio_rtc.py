@@ -22,6 +22,7 @@ PROFINET IO layers for scapy which correspond to Real-Time Cyclic data
 """
 
 # external imports
+from __future__ import absolute_import
 import math
 import struct
 
@@ -35,6 +36,8 @@ from scapy.fields import BitEnumField, BitField, ByteField,\
 
 # local imports
 from scapy.contrib.pnio import ProfinetIO
+from scapy.compat import orb
+from scapy.modules.six.moves import range
 
 
 #####################################
@@ -72,7 +75,7 @@ class PNIORealTimeRawData(Packet):
     def __init__(self, _pkt="", post_transform=None, _internal=0, _underlayer=None, config=None, **fields):
         """
         length=None means that the length must be managed by the user. If it's
-        defined, the field will always be length-long (padded with "\\x00" if
+        defined, the field will always be length-long (padded with b"\\x00" if
         needed)
         """
         self._config = config
@@ -205,7 +208,7 @@ class PNIORealTime(Packet):
     name = "PROFINET Real-Time"
     fields_desc = [
         NotionalLenField("len", None, length_from=lambda p, s: len(s)),
-        NotionalLenField("dataLen", None, length_from=lambda p, s: len(s[:-4].rstrip("\0"))),
+        NotionalLenField("dataLen", None, length_from=lambda p, s: len(s[:-4].rstrip(b"\0"))),
         LowerLayerBoundPacketListField("data", [], _pnio_rtc_guess_payload_class, length_from=lambda p: p.dataLen),
         StrFixedLenField("padding", "", length_from=lambda p: p[PNIORealTime].padding_length()),
         ShortField("cycleCounter", 0),
@@ -224,13 +227,13 @@ class PNIORealTime(Packet):
         # dissected packets
         pkt_len = self.getfieldval("len")
         if pkt_len is not None:
-            return max(0, pkt_len - len(fld.addfield(self, "", val)) - 4)
+            return max(0, pkt_len - len(fld.addfield(self, b"", val)) - 4)
 
         if isinstance(self.underlayer, ProfinetIO) and \
                 isinstance(self.underlayer.underlayer, UDP):
-            return max(0, 12 - len(fld.addfield(self, "", val)))
+            return max(0, 12 - len(fld.addfield(self, b"", val)))
         else:
-            return max(0, 40 - len(fld.addfield(self, "", val)))
+            return max(0, 40 - len(fld.addfield(self, b"", val)))
 
     @staticmethod
     def analyse_data(packets):
@@ -244,7 +247,7 @@ class PNIORealTime(Packet):
     @staticmethod
     def find_data(packets):
         """Analyse a packet list to extract data offsets from packets data."""
-        # a dictionnary to count data offsets (ie != 0x80)
+        # a dictionary to count data offsets (ie != 0x80)
         # It's formatted: {(src, dst): (total, [count for offset in len])}
         heuristic = {}
 
@@ -252,7 +255,7 @@ class PNIORealTime(Packet):
         # 0x80 are mainly IOxS and trailling 0x00s are just padding
         for pkt in packets:
             if PNIORealTime in pkt:
-                pdu = bytes(pkt[PNIORealTime])[:-4].rstrip("\0")
+                pdu = bytes(pkt[PNIORealTime])[:-4].rstrip(b"\0")
 
                 if (pkt.src, pkt.dst) not in heuristic:
                     heuristic[(pkt.src, pkt.dst)] = (0, [])
@@ -263,7 +266,7 @@ class PNIORealTime(Packet):
                     counts.extend([0 for _ in range(len(pdu) - len(counts))])
 
                 for i in range(len(pdu)):
-                    if pdu[i] != "\x80":
+                    if orb(pdu[i]) != 0x80:
                         counts[i] += 1
 
                 comm = (pkt.src, pkt.dst)
@@ -277,7 +280,7 @@ class PNIORealTime(Packet):
             loc = locations[comm] = []
             start = None
             for i in range(length):
-                if counts[i] > total / 2:   # Data if more than half is != 0x80
+                if counts[i] > total // 2:   # Data if more than half is != 0x80
                     if start is None:
                         start = i
                 else:
@@ -367,7 +370,7 @@ class PNIORealTime(Packet):
                 for pkt in packets:
                     if PNIORealTime in pkt and (pkt.src, pkt.dst) == comm:
                         comm_packets.append(
-                            bytes(pkt[PNIORealTime])[:-4].rstrip("\0")
+                            bytes(pkt[PNIORealTime])[:-4].rstrip(b"\0")
                             )
 
                 # Get the entropy
@@ -419,7 +422,7 @@ def entropy_of_byte(packets, position):
     # Count each byte a appearance
     for pkt in packets:
         if -position <= len(pkt):     # position must be a negative index
-            counter[ord(pkt[position])] += 1
+            counter[orb(pkt[position])] += 1
 
     # Compute the Shannon entropy
     entropy = 0
@@ -450,7 +453,7 @@ class XVarBytesField(XByteField):
 
     def getfield(self, pkt, s):
         length = self.length_from(pkt)
-        val = struct.unpack(self.fmt, "\x00"*(8 - length) + s[:length])[0]
+        val = struct.unpack(self.fmt, b"\x00"*(8 - length) + s[:length])[0]
         return  s[length:], self.m2i(pkt, val)
 
 

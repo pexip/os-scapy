@@ -7,60 +7,29 @@
 Wireless LAN according to IEEE 802.11.
 """
 
+from __future__ import print_function
 import re,struct
 from zlib import crc32
 
-from scapy.config import conf
+from scapy.config import conf, crypto_validator
 from scapy.data import *
+from scapy.compat import *
 from scapy.packet import *
 from scapy.fields import *
 from scapy.ansmachine import *
 from scapy.plist import PacketList
 from scapy.layers.l2 import *
 from scapy.layers.inet import IP, TCP
+from scapy.error import warning
 
 
-try:
-    from Crypto.Cipher import ARC4
-except ImportError:
-    log_loading.info("Can't import python Crypto lib. Won't be able to decrypt WEP.")
+if conf.crypto_valid:
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms
+else:
+    default_backend = Ciphers = algorithms = None
+    log_loading.info("Can't import python-cryptography v1.7+. Disabled WEP decryption/encryption. (Dot11)")
 
-
-### Fields
-
-class Dot11AddrMACField(MACField):
-    def is_applicable(self, pkt):
-        return 1
-    def addfield(self, pkt, s, val):
-        if self.is_applicable(pkt):
-            return MACField.addfield(self, pkt, s, val)
-        else:
-            return s        
-    def getfield(self, pkt, s):
-        if self.is_applicable(pkt):
-            return MACField.getfield(self, pkt, s)
-        else:
-            return s,None
-
-class Dot11Addr2MACField(Dot11AddrMACField):
-    def is_applicable(self, pkt):
-        if pkt.type == 1:
-            return pkt.subtype in [ 0xb, 0xa, 0xe, 0xf] # RTS, PS-Poll, CF-End, CF-End+CF-Ack
-        return 1
-
-class Dot11Addr3MACField(Dot11AddrMACField):
-    def is_applicable(self, pkt):
-        if pkt.type in [0,2]:
-            return 1
-        return 0
-
-class Dot11Addr4MACField(Dot11AddrMACField):
-    def is_applicable(self, pkt):
-        if pkt.type == 2:
-            if pkt.FCfield & 0x3 == 0x3: # To-DS and From-DS are set
-                return 1
-        return 0
-    
 
 ### Layers
 
@@ -134,47 +103,45 @@ class PPI(Packet):
     name = "Per-Packet Information header (partial)"
     fields_desc = [ ByteField("version", 0),
                     ByteField("flags", 0),
-                    FieldLenField("len", None, fmt="<H", length_of="fields", adjust=lambda pkt,x:x+8),
+                    FieldLenField("len", None, fmt="<H", length_of="notdecoded", adjust=lambda pkt,x:x+8),
                     LEIntField("dlt", 0),
                     StrLenField("notdecoded", "", length_from = lambda pkt:pkt.len-8)
                     ]
 
 
-
-class Dot11SCField(LEShortField):
-    def is_applicable(self, pkt):
-        return pkt.type != 1 # control frame
-    def addfield(self, pkt, s, val):
-        if self.is_applicable(pkt):
-            return LEShortField.addfield(self, pkt, s, val)
-        else:
-            return s
-    def getfield(self, pkt, s):
-        if self.is_applicable(pkt):
-            return LEShortField.getfield(self, pkt, s)
-        else:
-            return s,None
-
 class Dot11(Packet):
     name = "802.11"
     fields_desc = [
-                    BitField("subtype", 0, 4),
-                    BitEnumField("type", 0, 2, ["Management", "Control", "Data", "Reserved"]),
-                    BitField("proto", 0, 2),
-                    FlagsField("FCfield", 0, 8, ["to-DS", "from-DS", "MF", "retry", "pw-mgt", "MD", "wep", "order"]),
-                    ShortField("ID",0),
-                    MACField("addr1", ETHER_ANY),
-                    Dot11Addr2MACField("addr2", ETHER_ANY),
-                    Dot11Addr3MACField("addr3", ETHER_ANY),
-                    Dot11SCField("SC", 0),
-                    Dot11Addr4MACField("addr4", ETHER_ANY) 
-                    ]
+        BitField("subtype", 0, 4),
+        BitEnumField("type", 0, 2, ["Management", "Control", "Data",
+                                    "Reserved"]),
+        BitField("proto", 0, 2),
+        FlagsField("FCfield", 0, 8, ["to-DS", "from-DS", "MF", "retry",
+                                     "pw-mgt", "MD", "wep", "order"]),
+        ShortField("ID",0),
+        MACField("addr1", ETHER_ANY),
+        ConditionalField(
+            MACField("addr2", ETHER_ANY),
+            lambda pkt: (pkt.type != 1 or
+                         pkt.subtype in [0x8, 0x9, 0xa, 0xb, 0xe, 0xf]),
+        ),
+        ConditionalField(
+            MACField("addr3", ETHER_ANY),
+            lambda pkt: pkt.type in [0, 2],
+        ),
+        ConditionalField(LEShortField("SC", 0), lambda pkt: pkt.type != 1),
+        ConditionalField(
+            MACField("addr4", ETHER_ANY),
+            lambda pkt: (pkt.type == 2 and
+                         pkt.FCfield & 3 == 3),  ## from-DS+to-DS
+        ),
+    ]
     def mysummary(self):
         return self.sprintf("802.11 %Dot11.type% %Dot11.subtype% %Dot11.addr2% > %Dot11.addr1%")
     def guess_payload_class(self, payload):
         if self.type == 0x02 and (0x08 <= self.subtype <= 0xF and self.subtype != 0xD):
             return Dot11QoS
-	elif self.FCfield & 0x40:
+        elif self.FCfield & 0x40:
             return Dot11WEP
         else:
             return Packet.guess_payload_class(self, payload)
@@ -212,10 +179,10 @@ class Dot11(Packet):
 
 class Dot11QoS(Packet):
     name = "802.11 QoS"
-    fields_desc = [ BitField("TID",None,4),
+    fields_desc = [ BitField("Reserved",None,1),
+                    BitField("Ack_Policy", None, 2),
                     BitField("EOSP",None,1),
-                    BitField("Ack Policy",None,2),
-                    BitField("Reserved",None,1),
+                    BitField("TID",None,4),
                     ByteField("TXOP",None) ]
     def guess_payload_class(self, payload):
         if isinstance(self.underlayer, Dot11):
@@ -255,7 +222,10 @@ class Dot11Elt(Packet):
                     StrLenField("info", "", length_from=lambda x:x.len) ]
     def mysummary(self):
         if self.ID == 0:
-            return "SSID=%s"%repr(self.info),[Dot11]
+            ssid = repr(self.info)
+            if ssid[:2] in ['b"', "b'"]:
+                ssid = ssid[1:]
+            return "SSID=%s" % ssid, [Dot11]
         else:
             return ""
 
@@ -315,44 +285,60 @@ class Dot11Deauth(Packet):
 
 class Dot11WEP(Packet):
     name = "802.11 WEP packet"
-    fields_desc = [ StrFixedLenField("iv", "\0\0\0", 3),
+    fields_desc = [ StrFixedLenField("iv", b"\0\0\0", 3),
                     ByteField("keyid", 0),
                     StrField("wepdata",None,remain=4),
                     IntField("icv",None) ]
 
+    @crypto_validator
+    def decrypt(self, key=None):
+        if key is None:
+            key = conf.wepkey
+        if key:
+            d = Cipher(
+                algorithms.ARC4(self.iv + key.encode("utf8")),
+                None,
+                default_backend(),
+            ).decryptor()
+            self.add_payload(LLC(d.update(self.wepdata) + d.finalize()))
+
     def post_dissect(self, s):
-#        self.icv, = struct.unpack("!I",self.wepdata[-4:])
-#        self.wepdata = self.wepdata[:-4]
         self.decrypt()
 
     def build_payload(self):
         if self.wepdata is None:
             return Packet.build_payload(self)
-        return ""
+        return b""
 
-    def post_build(self, p, pay):
-        if self.wepdata is None:
-            key = conf.wepkey
-            if key:
-                if self.icv is None:
-                    pay += struct.pack("<I",crc32(pay))
-                    icv = ""
-                else:
-                    icv = p[4:8]
-                c = ARC4.new(self.iv+key)
-                p = p[:4]+c.encrypt(pay)+icv
-            else:
-                warning("No WEP key set (conf.wepkey).. strange results expected..")
-        return p
-            
-
-    def decrypt(self,key=None):
+    @crypto_validator
+    def encrypt(self, p, pay, key=None):
         if key is None:
             key = conf.wepkey
         if key:
-            c = ARC4.new(self.iv+key)
-            self.add_payload(LLC(c.decrypt(self.wepdata)))
-                    
+            if self.icv is None:
+                pay += struct.pack("<I", crc32(pay) & 0xffffffff)
+                icv = b""
+            else:
+                icv = p[4:8]
+            e = Cipher(
+                algorithms.ARC4(self.iv + key.encode("utf8")),
+                None,
+                default_backend(),
+            ).encryptor()
+            return p[:4] + e.update(pay) + e.finalize() + icv
+        else:
+            warning("No WEP key set (conf.wepkey).. strange results expected..")
+            return b""
+
+    def post_build(self, p, pay):
+        if self.wepdata is None:
+            p = self.encrypt(p, raw(pay))
+        return p
+
+
+class Dot11Ack(Packet):
+    name = "802.11 Ack packet"
+
 
 bind_layers( PrismHeader,   Dot11,         )
 bind_layers( RadioTap,      Dot11,         )
@@ -370,6 +356,7 @@ bind_layers( Dot11,         Dot11ATIM,       subtype=9, type=0)
 bind_layers( Dot11,         Dot11Disas,      subtype=10, type=0)
 bind_layers( Dot11,         Dot11Auth,       subtype=11, type=0)
 bind_layers( Dot11,         Dot11Deauth,     subtype=12, type=0)
+bind_layers( Dot11,         Dot11Ack,        subtype=13, type=1)
 bind_layers( Dot11Beacon,     Dot11Elt,    )
 bind_layers( Dot11AssoReq,    Dot11Elt,    )
 bind_layers( Dot11AssoResp,   Dot11Elt,    )
@@ -381,13 +368,13 @@ bind_layers( Dot11Auth,       Dot11Elt,    )
 bind_layers( Dot11Elt,        Dot11Elt,    )
 
 
-conf.l2types.register(105, Dot11)
+conf.l2types.register(DLT_IEEE802_11, Dot11)
 conf.l2types.register_num2layer(801, Dot11)
-conf.l2types.register(119, PrismHeader)
+conf.l2types.register(DLT_PRISM_HEADER, PrismHeader)
 conf.l2types.register_num2layer(802, PrismHeader)
-conf.l2types.register(127, RadioTap)
-conf.l2types.register(0xc0, PPI)
+conf.l2types.register(DLT_IEEE802_11_RADIO, RadioTap)
 conf.l2types.register_num2layer(803, RadioTap)
+conf.l2types.register(DLT_PPI, PPI)
 
 
 class WiFi_am(AnsweringMachine):
@@ -410,11 +397,13 @@ iwconfig wlan0 mode managed
     function_name = "airpwn"
     filter = None
     
-    def parse_options(self, iffrom, ifto, replace, pattern="", ignorepattern=""):
+    def parse_options(self, iffrom=conf.iface, ifto=conf.iface, replace="",
+                            pattern="", ignorepattern=""):
         self.iffrom = iffrom
         self.ifto = ifto
-        ptrn = re.compile(pattern)
-        iptrn = re.compile(ignorepattern)
+        self.ptrn = re.compile(pattern.encode())
+        self.iptrn = re.compile(ignorepattern.encode())
+        self.replace = replace
         
     def is_request(self, pkt):
         if not isinstance(pkt,Dot11):
@@ -425,16 +414,17 @@ iwconfig wlan0 mode managed
             return 0
         ip = pkt.getlayer(IP)
         tcp = pkt.getlayer(TCP)
-        pay = str(tcp.payload)
+        pay = raw(tcp.payload)
         if not self.ptrn.match(pay):
             return 0
-        if self.iptrn.match(pay):
+        if self.iptrn.match(pay) == True:
             return 0
+        return True
 
     def make_reply(self, p):
         ip = p.getlayer(IP)
         tcp = p.getlayer(TCP)
-        pay = str(tcp.payload)
+        pay = raw(tcp.payload)
         del(p.payload.payload.payload)
         p.FCfield="from-DS"
         p.addr1,p.addr2 = p.addr2,p.addr1
@@ -449,8 +439,9 @@ iwconfig wlan0 mode managed
         q.getlayer(TCP).seq+=len(self.replace)
         return [p,q]
     
-    def print_reply(self):
-        print self.sprintf("Sent %IP.src%:%IP.sport% > %IP.dst%:%TCP.dport%")
+    def print_reply(self, query, *reply):
+        p = reply[0][0]
+        print(p.sprintf("Sent %IP.src%:%IP.sport% > %IP.dst%:%TCP.dport%"))
 
     def send_reply(self, reply):
         sendp(reply, iface=self.ifto, **self.optsend)
@@ -459,87 +450,6 @@ iwconfig wlan0 mode managed
         sniff(iface=self.iffrom, **self.optsniff)
 
 
-
-plst=[]
-def get_toDS():
-    global plst
-    while 1:
-        p,=sniff(iface="eth1",count=1)
-        if not isinstance(p,Dot11):
-            continue
-        if p.FCfield & 1:
-            plst.append(p)
-            print "."
-
-
-#    if not ifto.endswith("ap"):
-#        print "iwpriv %s hostapd 1" % ifto
-#        os.system("iwpriv %s hostapd 1" % ifto)
-#        ifto += "ap"
-#        
-#    os.system("iwconfig %s mode monitor" % iffrom)
-#    
-
-def airpwn(iffrom, ifto, replace, pattern="", ignorepattern=""):
-    """Before using this, initialize "iffrom" and "ifto" interfaces:
-iwconfig iffrom mode monitor
-iwpriv orig_ifto hostapd 1
-ifconfig ifto up
-note: if ifto=wlan0ap then orig_ifto=wlan0
-note: ifto and iffrom must be set on the same channel
-ex:
-ifconfig eth1 up
-iwconfig eth1 mode monitor
-iwconfig eth1 channel 11
-iwpriv wlan0 hostapd 1
-ifconfig wlan0ap up
-iwconfig wlan0 channel 11
-iwconfig wlan0 essid dontexist
-iwconfig wlan0 mode managed
-"""
-    
-    ptrn = re.compile(pattern)
-    iptrn = re.compile(ignorepattern)
-    def do_airpwn(p, ifto=ifto, replace=replace, ptrn=ptrn, iptrn=iptrn):
-        if not isinstance(p,Dot11):
-            return
-        if not p.FCfield & 1:
-            return
-        if not p.haslayer(TCP):
-            return
-        ip = p.getlayer(IP)
-        tcp = p.getlayer(TCP)
-        pay = str(tcp.payload)
-#        print "got tcp"
-        if not ptrn.match(pay):
-            return
-#        print "match 1"
-        if iptrn.match(pay):
-            return
-#        print "match 2"
-        del(p.payload.payload.payload)
-        p.FCfield="from-DS"
-        p.addr1,p.addr2 = p.addr2,p.addr1
-        q = p.copy()
-        p /= IP(src=ip.dst,dst=ip.src)
-        p /= TCP(sport=tcp.dport, dport=tcp.sport,
-                 seq=tcp.ack, ack=tcp.seq+len(pay),
-                 flags="PA")
-        q = p.copy()
-        p /= replace
-        q.ID += 1
-        q.getlayer(TCP).flags="RA"
-        q.getlayer(TCP).seq+=len(replace)
-        
-        sendp([p,q], iface=ifto, verbose=0)
-#        print "send",repr(p)        
-#        print "send",repr(q)
-        print p.sprintf("Sent %IP.src%:%IP.sport% > %IP.dst%:%TCP.dport%")
-
-    sniff(iface=iffrom,prn=do_airpwn)
-
-            
-        
 conf.stats_dot11_protocols += [Dot11WEP, Dot11Beacon, ]
 
 
@@ -553,7 +463,7 @@ class Dot11PacketList(PacketList):
 
         PacketList.__init__(self, res, name, stats)
     def toEthernet(self):
-        data = map(lambda x:x.getlayer(Dot11), filter(lambda x : x.haslayer(Dot11) and x.type == 2, self.res))
+        data = [x[Dot11] for x in self.res if Dot11 in x and x.type == 2]
         r2 = []
         for p in data:
             q = p.copy()

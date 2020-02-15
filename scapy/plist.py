@@ -8,15 +8,20 @@ PacketList: holds several packets and allows to do operations on them.
 """
 
 
+from __future__ import absolute_import
+from __future__ import print_function
 import os,subprocess
 from collections import defaultdict
 
 from scapy.config import conf
+from scapy.consts import WINDOWS
 from scapy.base_classes import BasePacket,BasePacketList
-from scapy.utils import do_graph,hexdump,make_table,make_lined_table,make_tex_table,get_temp_file
-
-from scapy.arch import plt, MATPLOTLIB_INLINED, MATPLOTLIB_DEFAULT_PLOT_KARGS
-
+from scapy.utils import do_graph,hexdump,make_table,make_lined_table,make_tex_table, \
+    get_temp_file, issubtype
+from scapy.extlib import plt, MATPLOTLIB_INLINED, MATPLOTLIB_DEFAULT_PLOT_KARGS
+from functools import reduce
+import scapy.modules.six as six
+from scapy.modules.six.moves import range, zip
 
 
 #############
@@ -34,7 +39,7 @@ class PacketList(BasePacketList):
         self.stats = stats
         if res is None:
             res = []
-        if isinstance(res, PacketList):
+        elif isinstance(res, PacketList):
             res = res.res
         self.res = res
         self.listname = name
@@ -47,7 +52,7 @@ class PacketList(BasePacketList):
     def _elt2show(self, elt):
         return self._elt2sum(elt)
     def __repr__(self):
-        stats = dict((x, 0) for x in self.stats)
+        stats = {x: 0 for x in self.stats}
         other = 0
         for r in self.res:
             f = 0
@@ -75,10 +80,10 @@ class PacketList(BasePacketList):
     def __getattr__(self, attr):
         return getattr(self.res, attr)
     def __getitem__(self, item):
-        if isinstance(item,type) and issubclass(item,BasePacket):
-            return self.__class__(filter(lambda x: item in self._elt2pkt(x),self.res),
+        if issubtype(item, BasePacket):
+            return self.__class__([x for x in self.res if item in self._elt2pkt(x)],
                                   name="%s from %s"%(item.__name__,self.listname))
-        if type(item) is slice:
+        if isinstance(item, slice):
             return self.__class__(self.res.__getitem__(item),
                                   name = "mod %s" % self.listname)
         return self.res.__getitem__(item)
@@ -97,9 +102,9 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
                 if not lfilter(r):
                     continue
             if prn is None:
-                print self._elt2sum(r)
+                print(self._elt2sum(r))
             else:
-                print prn(r)
+                print(prn(r))
     def nsummary(self, prn=None, lfilter=None):
         """prints a summary of each packet with the packet's number
 prn:     function to apply to each packet instead of lambda x:x.summary()
@@ -108,11 +113,11 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
             if lfilter is not None:
                 if not lfilter(res):
                     continue
-            print conf.color_theme.id(i,fmt="%04i"),
+            print(conf.color_theme.id(i,fmt="%04i"), end=' ')
             if prn is None:
-                print self._elt2sum(res)
+                print(self._elt2sum(res))
             else:
-                print prn(res)
+                print(prn(res))
     def display(self): # Deprecated. Use show()
         """deprecated. is show()"""
         self.show()
@@ -122,10 +127,10 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
     
     def filter(self, func):
         """Returns a packet list filtered by a truth function"""
-        return self.__class__(filter(func,self.res),
+        return self.__class__([x for x in self.res if func(x)],
                               name="filtered %s"%self.listname)
     def make_table(self, *args, **kargs):
-        """Prints a table using a function that returs for each packet its head column value, head row value and displayed value
+        """Prints a table using a function that returns for each packet its head column value, head row value and displayed value
         ex: p.make_table(lambda x:(x[IP].dst, x[TCP].dport, x[TCP].sprintf("%flags%")) """
         return make_table(self.res, *args, **kargs)
     def make_lined_table(self, *args, **kargs):
@@ -139,7 +144,7 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
         """Applies a function to each packet to get a value that will be plotted
         with matplotlib. A list of matplotlib.lines.Line2D is returned.
 
-        lfilter: a truth function that decides whether a packet must be ploted
+        lfilter: a truth function that decides whether a packet must be plotted
         """
 
         # Get the list of packets
@@ -172,10 +177,10 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
         # Get the list of packets
         if lfilter is None:
             l = [f(self.res[i], self.res[i+1])
-                    for i in xrange(len(self.res) - delay)]
+                    for i in range(len(self.res) - delay)]
         else:
             l = [f(self.res[i], self.res[i+1])
-                    for i in xrange(len(self.res) - delay)
+                    for i in range(len(self.res) - delay)
                         if lfilter(self.res[i])]
 
         # Mimic the default gnuplot output
@@ -213,10 +218,10 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
 
         if plot_xy:
             lines = [plt.plot(*zip(*pl), **dict(kargs, label=k))
-                     for k, pl in d.iteritems()]
+                     for k, pl in six.iteritems(d)]
         else:
             lines = [plt.plot(pl, **dict(kargs, label=k))
-                     for k, pl in d.iteritems()]
+                     for k, pl in six.iteritems(d)]
         plt.legend(loc="center right", bbox_to_anchor=(1.5, 0.5))
 
         # Call show() if matplotlib is not inlined
@@ -237,9 +242,9 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
             p = self._elt2pkt(res)
             if lfilter is not None and not lfilter(p):
                 continue
-            print "%s %s %s" % (conf.color_theme.id(i,fmt="%04i"),
+            print("%s %s %s" % (conf.color_theme.id(i,fmt="%04i"),
                                 p.sprintf("%.time%"),
-                                self._elt2sum(res))
+                                self._elt2sum(res)))
             if p.haslayer(conf.raw_layer):
                 hexdump(p.getlayer(conf.raw_layer).load)
 
@@ -250,34 +255,34 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
             p = self._elt2pkt(res)
             if lfilter is not None and not lfilter(p):
                 continue
-            print "%s %s %s" % (conf.color_theme.id(i,fmt="%04i"),
+            print("%s %s %s" % (conf.color_theme.id(i,fmt="%04i"),
                                 p.sprintf("%.time%"),
-                                self._elt2sum(res))
+                                self._elt2sum(res)))
             hexdump(p)
 
     def padding(self, lfilter=None):
         """Same as hexraw(), for Padding layer"""
-        for i in enumerate(self.res):
+        for i, res in enumerate(self.res):
             p = self._elt2pkt(res)
             if p.haslayer(conf.padding_layer):
                 if lfilter is None or lfilter(p):
-                    print "%s %s %s" % (conf.color_theme.id(i,fmt="%04i"),
+                    print("%s %s %s" % (conf.color_theme.id(i,fmt="%04i"),
                                         p.sprintf("%.time%"),
-                                        self._elt2sum(res))
+                                        self._elt2sum(res)))
                     hexdump(p.getlayer(conf.padding_layer).load)
 
     def nzpadding(self, lfilter=None):
         """Same as padding() but only non null padding"""
-        for i in enumerate(self.res):
+        for i, res in enumerate(self.res):
             p = self._elt2pkt(res)
             if p.haslayer(conf.padding_layer):
                 pad = p.getlayer(conf.padding_layer).load
                 if pad == pad[0]*len(pad):
                     continue
                 if lfilter is None or lfilter(p):
-                    print "%s %s %s" % (conf.color_theme.id(i,fmt="%04i"),
+                    print("%s %s %s" % (conf.color_theme.id(i,fmt="%04i"),
                                         p.sprintf("%.time%"),
-                                        self._elt2sum(res))
+                                        self._elt2sum(res)))
                     hexdump(p.getlayer(conf.padding_layer).load)
         
 
@@ -293,8 +298,11 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
         prog: which graphviz program to use"""
         if getsrcdst is None:
             def getsrcdst(pkt):
+                """Extract src and dst addresses"""
                 if 'IP' in pkt:
                     return (pkt['IP'].src, pkt['IP'].dst)
+                if 'IPv6' in pkt:
+                    return (pkt['IPv6'].src, pkt['IPv6'].dst)
                 if 'ARP' in pkt:
                     return (pkt['ARP'].psrc, pkt['ARP'].pdst)
                 raise TypeError()
@@ -315,7 +323,7 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
             else:
                 conv[c] = conv.get(c, 0) + 1
         gr = 'digraph "conv" {\n'
-        for (s, d), l in conv.iteritems():
+        for (s, d), l in six.iteritems(conv):
             gr += '\t "%s" -> "%s" [label="%s"]\n' % (
                 s, d, ', '.join(str(x) for x in l) if isinstance(l, set) else l
             )
@@ -371,33 +379,33 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
                 M = 1
             return m, M
 
-        mins, maxs = minmax(x for x, _ in sl.itervalues())
-        mine, maxe = minmax(x for x, _ in el.itervalues())
-        mind, maxd = minmax(dl.itervalues())
+        mins, maxs = minmax(x for x, _ in six.itervalues(sl))
+        mine, maxe = minmax(x for x, _ in six.itervalues(el))
+        mind, maxd = minmax(six.itervalues(dl))
     
         gr = 'digraph "afterglow" {\n\tedge [len=2.5];\n'
 
         gr += "# src nodes\n"
         for s in sl:
             n,l = sl[s]; n = 1+float(n-mins)/(maxs-mins)
-            gr += '"src.%s" [label = "%s", shape=box, fillcolor="#FF0000", style=filled, fixedsize=1, height=%.2f,width=%.2f];\n' % (`s`,`s`,n,n)
+            gr += '"src.%s" [label = "%s", shape=box, fillcolor="#FF0000", style=filled, fixedsize=1, height=%.2f,width=%.2f];\n' % (repr(s),repr(s),n,n)
         gr += "# event nodes\n"
         for e in el:
             n,l = el[e]; n = n = 1+float(n-mine)/(maxe-mine)
-            gr += '"evt.%s" [label = "%s", shape=circle, fillcolor="#00FFFF", style=filled, fixedsize=1, height=%.2f, width=%.2f];\n' % (`e`,`e`,n,n)
+            gr += '"evt.%s" [label = "%s", shape=circle, fillcolor="#00FFFF", style=filled, fixedsize=1, height=%.2f, width=%.2f];\n' % (repr(e),repr(e),n,n)
         for d in dl:
             n = dl[d]; n = n = 1+float(n-mind)/(maxd-mind)
-            gr += '"dst.%s" [label = "%s", shape=triangle, fillcolor="#0000ff", style=filled, fixedsize=1, height=%.2f, width=%.2f];\n' % (`d`,`d`,n,n)
+            gr += '"dst.%s" [label = "%s", shape=triangle, fillcolor="#0000ff", style=filled, fixedsize=1, height=%.2f, width=%.2f];\n' % (repr(d),repr(d),n,n)
 
         gr += "###\n"
         for s in sl:
             n,l = sl[s]
             for e in l:
-                gr += ' "src.%s" -> "evt.%s";\n' % (`s`,`e`) 
+                gr += ' "src.%s" -> "evt.%s";\n' % (repr(s),repr(e)) 
         for e in el:
             n,l = el[e]
             for d in l:
-                gr += ' "evt.%s" -> "dst.%s";\n' % (`e`,`d`) 
+                gr += ' "evt.%s" -> "dst.%s";\n' % (repr(e),repr(d)) 
             
         gr += "}"
         return do_graph(gr, **kargs)
@@ -407,13 +415,12 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
         import pyx
         d = pyx.document.document()
         l = len(self.res)
-        for i in enumerate(self.res):
-            elt = res
-            c = self._elt2pkt(elt).canvas_dump(**kargs)
+        for i, res in enumerate(self.res):
+            c = self._elt2pkt(res).canvas_dump(**kargs)
             cbb = c.bbox()
             c.text(cbb.left(),cbb.top()+1,r"\font\cmssfont=cmss12\cmssfont{Frame %i/%i}" % (i,l),[pyx.text.size.LARGE])
             if conf.verb >= 2:
-                os.write(1,".")
+                os.write(1, b".")
             d.append(pyx.document.page(c, paperformat=pyx.document.paperformat.A4,
                                        margin=1*pyx.unit.t_cm,
                                        fittosize=1))
@@ -422,17 +429,21 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
                  
 
     def psdump(self, filename = None, **kargs):
-        """Creates a multipage poscript file with a psdump of every packet
+        """Creates a multi-page postcript file with a psdump of every packet
         filename: name of the file to write to. If empty, a temporary file is used and
                   conf.prog.psreader is called"""
         d = self._dump_document(**kargs)
         if filename is None:
             filename = get_temp_file(autoext=".ps")
             d.writePSfile(filename)
-            subprocess.Popen([conf.prog.psreader, filename+".ps"])
+            if WINDOWS and conf.prog.psreader is None:
+                os.startfile(filename)
+            else:
+                with ContextManagerSubprocess("psdump()", conf.prog.psreader):
+                    subprocess.Popen([conf.prog.psreader, filename])
         else:
             d.writePSfile(filename)
-        print
+        print()
         
     def pdfdump(self, filename = None, **kargs):
         """Creates a PDF file with a psdump of every packet
@@ -442,10 +453,14 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
         if filename is None:
             filename = get_temp_file(autoext=".pdf")
             d.writePDFfile(filename)
-            subprocess.Popen([conf.prog.pdfreader, filename+".pdf"])
+            if WINDOWS and conf.prog.pdfreader is None:
+                os.startfile(filename)
+            else:
+                with ContextManagerSubprocess("pdfdump()", conf.prog.pdfreader):
+                    subprocess.Popen([conf.prog.pdfreader, filename])
         else:
             d.writePDFfile(filename)
-        print
+        print()
 
     def sr(self,multi=0):
         """sr([multi=1]) -> (SndRcvList, PacketList)
@@ -471,28 +486,38 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
                     break
             i += 1
         if multi:
-            remain = filter(lambda x:not hasattr(x,"_answered"), remain)
+            remain = [x for x in remain if not hasattr(x, "_answered")]
         return SndRcvList(sr),PacketList(remain)
 
     def sessions(self, session_extractor=None):
         if session_extractor is None:
             def session_extractor(p):
-                sess = "Other"
+                """Extract sessions from packets"""
                 if 'Ether' in p:
-                    if 'IP' in p:
+                    if 'IP' in p or 'IPv6' in p:
+                        ip_src_fmt = "{IP:%IP.src%}{IPv6:%IPv6.src%}"
+                        ip_dst_fmt = "{IP:%IP.dst%}{IPv6:%IPv6.dst%}"
+                        addr_fmt = (ip_src_fmt, ip_dst_fmt)
                         if 'TCP' in p:
-                            sess = p.sprintf("TCP %IP.src%:%r,TCP.sport% > %IP.dst%:%r,TCP.dport%")
+                            fmt = "TCP {}:%r,TCP.sport% > {}:%r,TCP.dport%"
                         elif 'UDP' in p:
-                            sess = p.sprintf("UDP %IP.src%:%r,UDP.sport% > %IP.dst%:%r,UDP.dport%")
+                            fmt = "UDP {}:%r,UDP.sport% > {}:%r,UDP.dport%"
                         elif 'ICMP' in p:
-                            sess = p.sprintf("ICMP %IP.src% > %IP.dst% type=%r,ICMP.type% code=%r,ICMP.code% id=%ICMP.id%")
+                            fmt = "ICMP {} > {} type=%r,ICMP.type% code=%r," \
+                                  "ICMP.code% id=%ICMP.id%"
+                        elif 'ICMPv6' in p:
+                            fmt = "ICMPv6 {} > {} type=%r,ICMPv6.type% " \
+                                  "code=%r,ICMPv6.code%"
+                        elif 'IPv6' in p:
+                            fmt = "IPv6 {} > {} nh=%IPv6.nh%"
                         else:
-                            sess = p.sprintf("IP %IP.src% > %IP.dst% proto=%IP.proto%")
+                            fmt = "IP {} > {} proto=%IP.proto%"
+                        return p.sprintf(fmt.format(*addr_fmt))
                     elif 'ARP' in p:
-                        sess = p.sprintf("ARP %ARP.psrc% > %ARP.pdst%")
+                        return p.sprintf("ARP %ARP.psrc% > %ARP.pdst%")
                     else:
-                        sess = p.sprintf("Ethernet type=%04xr,Ether.type%")
-                return sess
+                        return p.sprintf("Ethernet type=%04xr,Ether.type%")
+                return "Other"
         sessions = defaultdict(self.__class__)
         for p in self.res:
             sess = session_extractor(self._elt2pkt(p))
@@ -511,7 +536,7 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
         """
         delete_checksums = kargs.get("delete_checksums",False)
         x=PacketList(name="Replaced %s" % self.listname)
-        if type(args[0]) is not tuple:
+        if not isinstance(args[0], tuple):
             args = (args,)
         for p in self.res:
             p = self._elt2pkt(p)
@@ -531,11 +556,6 @@ lfilter: truth function to apply to each packet to decide whether it will be dis
                             setattr(p[o], fld.name, new)
             x.append(p)
         return x
-                
-            
-        
-    
-        
 
 
 class SndRcvList(PacketList):

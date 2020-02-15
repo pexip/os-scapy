@@ -14,9 +14,9 @@ memory usage, particularly in parts of the code often called.
 
 ## What to contribute?
 
-You want to spend to time working on Scapy but have no (or little)
+You want to spend time working on Scapy but have no (or little)
 idea what to do? You can look for open issues
-[labeled "contributions wanted"](https://github.com/secdev/scapy/labels/contributions%20wanted).
+[labeled "contributions wanted"](https://github.com/secdev/scapy/labels/contributions%20wanted), or look at the [contributions roadmap](https://github.com/secdev/scapy/issues/399)
 
 If you have any ideas of useful contributions that you cannot (or do
 not want to) do yourself, open an issue and use the label
@@ -61,7 +61,7 @@ of function calls, packet creations, etc.).
 ### Coding style & conventions
 
 First, Scapy "legacy" code contains a lot of code that do not comply
-with the following recommendations, but we try to comply with the some
+with the following recommendations, but we try to comply with some
 guidelines for new code.
 
   - The code should be PEP-8 compliant; you can check your code with
@@ -72,7 +72,7 @@ guidelines for new code.
   - [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html)
     is a nice read!
   - Avoid creating unnecessary `list` objects, particularly if they
-    can be huge (e.g., when possible, use `xrange()` instead of
+    can be huge (e.g., when possible, use `scapy.modules.six.range()` instead of
     `range()`, `for line in fdesc` instead of `for line in
     fdesc.readlines()`; more generally prefer generators over lists).
 
@@ -80,7 +80,7 @@ guidelines for new code.
 
 Please consider adding tests for your new features or that trigger the
 bug you are fixing. This will prevent a regression from being
-unnoticed.
+unnoticed. Do not use the variable `_`  in your tests, as it could break them.
 
 ### New protocols
 
@@ -109,6 +109,22 @@ As an example, Packet().__init__() is called each time a **layer** is
 parsed from a string (during a network capture or a PCAP file
 read). Adding inefficient code here will have a disastrous effect on
 Scapy's performances.
+
+### Python 2 and 3 compatibility
+
+The project aims to provide code that works both on Python 2 and Python 3. Therefore, some rules need to be applied to achieve compatibility:
+- byte-string must be defined as `b"\x00\x01\x02"`
+- exceptions must comply with the new Python 3 format: `except SomeError as e:`
+- lambdas must be written using a single argument when using tuples: use `lambda x_y: x_y[0] + f(x_y[1])` instead of `lambda (x, y): x + f(y)`.
+- use int instead of long
+- use list comprehension instead of map() and filter()
+- use scapy.modules.six.range instead of xrange and range
+- use scapy.modules.six.itervalues(dict) instead of dict.values() or dict.itervalues()
+- use scapy.modules.six.string_types instead of basestring
+- `__bool__ = __nonzero__` must be used when declaring `__nonzero__` methods
+- `io.BytesIO` must be used instead of `StringIO` when using bytes
+- `__cmp__` must not be used.
+- UserDict should be imported via `six.UserDict`
 
 ### Code review
 

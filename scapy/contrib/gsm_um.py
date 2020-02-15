@@ -1,22 +1,21 @@
 #!/usr/bin/env python
 
+# This file is part of Scapy
+# Scapy is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# any later version.
+#
+# Scapy is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Scapy. If not, see <http://www.gnu.org/licenses/>.
+
 # scapy.contrib.description = PPI
 # scapy.contrib.status = loads
-
-"""
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-"""
 
     ####################################################################
     # This file holds the GSM UM interface implementation for Scapy    #
@@ -28,6 +27,7 @@
     # tested on: scapy-version: 2.2.0 (dev)                            #
     ####################################################################
 
+from __future__ import print_function
 import logging
 from types import IntType
 from types import NoneType
@@ -50,7 +50,7 @@ from scapy.fields import *
 
 def sendum(x, typeSock=0):
     try:
-        if type(x) is not str:
+        if not isinstance(x, str):
             x = str(x)
         if typeSock is 0:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -68,8 +68,8 @@ def sendum(x, typeSock=0):
         s.send(x)
         s.close()
     except:
-        print "[Error]: There was a problem when trying to transmit data.\
-               Please make sure you started the socket server."
+        print("[Error]: There was a problem when trying to transmit data.\
+               Please make sure you started the socket server.")
 
 # Known Bugs/Problems:
 # If a message uses multiple times the same IE you cannot set the values
@@ -128,14 +128,14 @@ def adapt(min_length, max_length, fields, fields2, location=2):
 
 def examples(example=None):
     if example == None:
-        print """This command presents some example to introduce scapy
+        print("""This command presents some example to introduce scapy
 gsm-um to new users.
 The following parameters can be used:
     examples("imsiDetach")
     examples("call")
-    examples("dissect")"""
+    examples("dissect")""")
     elif example == "imsiDetach":
-        print """
+        print("""
 >>> a=imsiDetachIndication()
 ... a.typeOfId=1; a.odd=1; a.idDigit1=0xF; 
 ... a.idDigit2_1=2; a.idDigit2=7; a.idDigit3_1=0;
@@ -146,13 +146,13 @@ The following parameters can be used:
 >>> hexdump(a)
 0000   05 01 00 08 F0 27 07 72  00 01 27 75 14   .....'.r..'u.
 >>> sendum(a)
-"""
+""")
     elif example == "call":
-        print """
+        print("""
 If you use an USRP and the testcall function this sets up a phonecall:
 >>> sendum(setupMobileOriginated())
 >>> sendum(connectAcknowledge())
-"""
+""")
 
 
 # Section 10.2/3
@@ -2933,7 +2933,6 @@ class MobileIdHdr(Packet):
             p = p[:1] + struct.pack(">B", res[1]) + p[2:]
         if res[0] != 0:
             p = p[:-res[0]]
-        print repr(p)
         return p + pay
 
 
@@ -4032,7 +4031,7 @@ class IraRestOctetsHdr(Packet):
              ]
 
 
-# len is 1 to 5 what do we do with the variable size? no lenght
+# len is 1 to 5 what do we do with the variable size? no length
 # field?! WTF
 class IaxRestOctetsHdr(Packet):
     """IAX Rest Octets Section 10.5.2.18"""
@@ -4509,7 +4508,7 @@ class PageModeAndChannelNeeded(Packet):
 
 class NccPermittedHdr(Packet):
     """NCC Permitted Section 10.5.2.27"""
-    name = "NCC Permited"
+    name = "NCC Permitted"
     fields_desc = [
              BitField("eightBitNP", None, 1),
              XBitField("ieiNP", None, 7),
@@ -5952,7 +5951,6 @@ class BearerCapabilityHdr(Packet):
         if len(p) is 5:
             p = p[:-2]
         if self.lengthBC is None:
-            print "len von a %s" % (len(p),)
             p = p[:1] + struct.pack(">B", len(p)-3) + p[2:]
         return p + pay
 
@@ -7899,7 +7897,7 @@ class PTmsiSignature(Packet):
     name = "P-TMSI Signature"
     fields_desc = [
              ByteField("ieiPTS", 0x0),
-             BitField("sgnature", 0x0, 24)
+             BitField("signature", 0x0, 24)
              ]
 
 
@@ -9740,7 +9738,7 @@ class IraRestOctets(Packet):
              ]
 
 
-# len is 1 to 5 what do we do with the variable size? no lenght
+# len is 1 to 5 what do we do with the variable size? no length
 # field?! WTF
 class IaxRestOctets(Packet):
     """IAX Rest Octets Section 10.5.2.18"""
@@ -9888,7 +9886,7 @@ class MultiRateConfiguration(Packet):
     """ MultiRate configuration Section 10.5.2.21aa"""
     name = "MultiRate Configuration"
  # This  packet has a variable length and hence structure. This packet
- # implements the longuest possible  packet. If you biuild a shorter
+ # implements the longest possible  packet. If you build a shorter
  #  packet, for example having only 6 bytes, the last 4 bytes are  named
  # "Spare" in the specs. Here they are  named "threshold2"
     fields_desc = [
@@ -10032,7 +10030,7 @@ class PageMode(Packet):
 
 class NccPermitted(Packet):
     """NCC Permitted Section 10.5.2.27"""
-    name = "NCC Permited"
+    name = "NCC Permitted"
     fields_desc = [
              ByteField("nccPerm", 0x0)
              ]
