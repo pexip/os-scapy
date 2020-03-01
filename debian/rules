@@ -2,18 +2,25 @@
 
 #export DH_VERBOSE=1
 
-# include /usr/share/cdbs/1/rules/debhelper.mk
-# include /usr/share/cdbs/1/class/python-distutils.mk
-# include /usr/share/cdbs/1/rules/simple-patchsys.mk
-#
-# DEB_DH_INSTALL_SOURCEDIR := debian/tmp
+include /usr/share/dpkg/pkg-info.mk
+export PYBUILD_NAME=scapy
 
 %:
-	dh $@ --with=python2 --with=quilt
+	dh $@ --with=python2,python3 --buildsystem=pybuild
+
+override_dh_auto_configure:
+	echo -n $(DEB_VERSION_UPSTREAM) > scapy/VERSION
 
 override_dh_auto_clean:
 	dh_auto_clean
 	-rm scapy/VERSION
 
-get-orig:
-	uscan --download-current-version --destdir ../tarballs
+override_dh_auto_install:
+	dh_auto_install
+	mv debian/python3-scapy/usr/bin/scapy \
+	   debian/python3-scapy/usr/bin/scapy3
+	mv debian/python3-scapy/usr/share/man/man1/scapy.1.gz \
+	   debian/python3-scapy/usr/share/man/man1/scapy3.1.gz
+
+override_dh_auto_test:
+	echo "Tests disabled, dependencies not installed during build"

@@ -115,13 +115,13 @@ Encoding and decoding are done using class methods provided by the codec. For ex
     >>> BERcodec_Object.dec('\x03\x03egg')
     (<ASN1_BIT_STRING['egg']>, '')
 
-ASN.1 objects are encoded using their ``.enc()`` method. This method must be called with the codec we want to use. All codecs are referenced in the ASN1_Codecs object. ``str()`` can also be used. In this case, the default codec (``conf.ASN1_default_codec``) will be used.
+ASN.1 objects are encoded using their ``.enc()`` method. This method must be called with the codec we want to use. All codecs are referenced in the ASN1_Codecs object. ``raw()`` can also be used. In this case, the default codec (``conf.ASN1_default_codec``) will be used.
 
 ::
 
     >>> x.enc(ASN1_Codecs.BER)
     '0\r\x02\x01\x07\x04\x03egg0\x03\x01\x01\x00'
-    >>> str(x)
+    >>> raw(x)
     '0\r\x02\x01\x07\x04\x03egg0\x03\x01\x01\x00'
     >>> xx,remain = BERcodec_Object.dec(_)
     >>> xx.show()
@@ -426,7 +426,7 @@ Now, how to use it? As usual::
     >>> send(IP(dst="1.2.3.4")/UDP()/SNMP())
     .
     Sent 1 packets.
-    >>> SNMP(str(a)).show()
+    >>> SNMP(raw(a)).show()
     ###[ SNMP ]###
       version= <ASN1_INTEGER[3L]>
       community= <ASN1_STRING['public']>
@@ -816,9 +816,9 @@ The first thing to do when building the RTC ``data`` buffer is to instanciate ea
 To instanciate one of these packets with its configuration, the ``config`` argument must be given. It is a ``dict()`` which contains all the required piece of configuration::
 
     >>> load_contrib('pnio_rtc')
-    >>> str(PNIORealTimeRawData(load='AAA', config={'length': 4}))
+    >>> raw(PNIORealTimeRawData(load='AAA', config={'length': 4}))
     'AAA\x00'
-    >>> str(Profisafe(load='AAA', Control_Status=0x20, CRC=0x424242, config={'length': 8, 'CRC': 3}))
+    >>> raw(Profisafe(load='AAA', Control_Status=0x20, CRC=0x424242, config={'length': 8, 'CRC': 3}))
     'AAA\x00 BBB'
     >>> hexdump(PNIORealTimeIOxS())
     0000   80                                                 .
@@ -827,7 +827,7 @@ To instanciate one of these packets with its configuration, the ``config`` argum
 RTC packet
 ----------
 
-Now that a data packet can be instanciated, a whole RTC packet may be built. ``PNIORealTime`` contains a field ``data`` which is a list of all data packets to add in the buffer, however, without the configuration, Scapy won't be
+Now that a data packet can be instantiated, a whole RTC packet may be built. ``PNIORealTime`` contains a field ``data`` which is a list of all data packets to add in the buffer, however, without the configuration, Scapy won't be
 able to dissect it::
 
     >>> load_contrib("pnio_rtc")
@@ -1047,15 +1047,42 @@ If no data packets are configured for a given offset, it defaults to a ``PNIORea
     
 In addition, one can see, when displaying a ``PNIORealTime`` packet, the field ``len``. This is a computed field which is not added in the final packet build. It is mainly useful for dissection and reconstruction, but it can also be used to modify the behaviour of the packet. In fact, RTC packet must always be long enough for an Ethernet frame and to do so, a padding must be added right after the ``data`` buffer. The default behaviour is to add ``padding`` whose size is computed during the ``build`` process::
 
-    >>> str(PNIORealTime(cycleCounter=0x4242, data=[PNIORealTimeIOxS()]))
+    >>> raw(PNIORealTime(cycleCounter=0x4242, data=[PNIORealTimeIOxS()]))
     '\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00BB5\x00'
 
 However, one can set ``len`` to modify this behaviour. ``len`` controls the length of the whole ``PNIORealTime`` packet. Then, to shorten the length of the padding, ``len`` can be set to a lower value::
 
-    >>> str(PNIORealTime(cycleCounter=0x4242, data=[PNIORealTimeIOxS()], len=50))
+    >>> raw(PNIORealTime(cycleCounter=0x4242, data=[PNIORealTimeIOxS()], len=50))
     '\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00BB5\x00'
-    >>> str(PNIORealTime(cycleCounter=0x4242, data=[PNIORealTimeIOxS()]))
+    >>> raw(PNIORealTime(cycleCounter=0x4242, data=[PNIORealTimeIOxS()]))
     '\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00BB5\x00'
-    >>> str(PNIORealTime(cycleCounter=0x4242, data=[PNIORealTimeIOxS()], len=30))
+    >>> raw(PNIORealTime(cycleCounter=0x4242, data=[PNIORealTimeIOxS()], len=30))
     '\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00BB5\x00'
 
+
+SCTP
+====
+
+SCTP is a relatively young transport-layer protocol combining both TCP and UDP characteristics. The `RFC 3286 <https://tools.ietf.org/html/rfc3286>`_ introduces it and its description lays in the `RFC 4960 <https://tools.ietf.org/html/rfc4960>`_.
+
+It is not broadly used, its mainly present in core networks operated by telecommunication companies, to support VoIP for instance.
+
+
+Enabling dynamic addressing reconfiguration and chunk authentication capabilities
+---------------------------------------------------------------------------------
+
+If you are trying to discuss with SCTP servers, you may be interested in capabilities added in `RFC 4895 <https://tools.ietf.org/html/rfc4895>`_ which describe how to authenticated some SCTP chunks, and/or `RFC 5061 <https://tools.ietf.org/html/rfc5061>`_ to dynamically reconfigure the IP address of a SCTP association.
+
+These capabilities are not always enabled by default on Linux. Scapy does not need any modification on its end, but SCTP servers may need specific activation.
+
+To enable the RFC 4895 about authenticating chunks::
+
+    $ sudo echo 1 > /proc/sys/net/sctp/auth_enable
+
+To enable the RFC 5061 about dynamic address reconfiguration::
+
+    $ sudo echo 1 > /proc/sys/net/sctp/addip_enable
+
+You may also want to use the dynamic address reconfiguration without necessarily enabling the chunk authentication::
+
+    $ sudo echo 1 > /proc/sys/net/sctp/addip_noauth_enable

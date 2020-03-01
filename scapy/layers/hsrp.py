@@ -49,7 +49,7 @@ class HSRP(Packet):
         ByteField("priority", 120),
         ByteField("group", 1),
         ByteField("reserved", 0),
-        StrFixedLenField("auth", "cisco" + "\00" * 3, 8),
+        StrFixedLenField("auth", b"cisco" + b"\00" * 3, 8),
         IPField("virtualIP", "192.168.1.1")]
 
     def guess_payload_class(self, payload):
@@ -67,9 +67,9 @@ class HSRPmd5(Packet):
         ByteEnumField("algo", 0, {1: "MD5"}),
         ByteField("padding", 0x00),
         XShortField("flags", 0x00),
-        IPField("sourceip", None),
+        SourceIPField("sourceip", None),
         XIntField("keyid", 0x00),
-        StrFixedLenField("authdigest", "\00" * 16, 16)]
+        StrFixedLenField("authdigest", b"\00" * 16, 16)]
 
     def post_build(self, p, pay):
         if self.len is None and pay:

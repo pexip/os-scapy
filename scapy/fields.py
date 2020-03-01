@@ -7,25 +7,31 @@
 Fields: basic data structures that make up parts of packets.
 """
 
-import struct,copy,socket
+from __future__ import absolute_import
+import struct,copy,socket,collections
 from scapy.config import conf
+from scapy.dadict import DADict
 from scapy.volatile import *
 from scapy.data import *
+from scapy.compat import *
 from scapy.utils import *
 from scapy.base_classes import BasePacket, Gen, Net, Field_metaclass
+from scapy.error import warning
+import scapy.modules.six as six
+from scapy.modules.six.moves import range
 
 
 ############
 ## Fields ##
 ############
 
-class Field(object):
+class Field(six.with_metaclass(Field_metaclass, object)):
     """For more informations on how this work, please refer to
        http://www.secdev.org/projects/scapy/files/scapydoc.pdf
        chapter ``Adding a New Field''"""
     __slots__ = ["name", "fmt", "default", "sz", "owners"]
-    __metaclass__ = Field_metaclass
     islist = 0
+    ismutable = False
     holds_packets = 0
     def __init__(self, name, default, fmt="H"):
         self.name = name
@@ -60,6 +66,8 @@ class Field(object):
         """Convert internal value to machine value"""
         if x is None:
             x = 0
+        elif isinstance(x, str):
+            return raw(x)
         return x
     def any2i(self, pkt, x):
         """Try to understand the most input values possible and make an internal value from them"""
@@ -76,9 +84,9 @@ class Field(object):
     def do_copy(self, x):
         if hasattr(x, "copy"):
             return x.copy()
-        if type(x) is list:
+        if isinstance(x, list):
             x = x[:]
-            for i in xrange(len(x)):
+            for i in range(len(x)):
                 if isinstance(x[i], BasePacket):
                     x[i] = x[i].copy()
         return x
@@ -98,8 +106,8 @@ class Field(object):
                 l = int(self.fmt[1:-1])
             return RandBin(l)
         else:
-            warning("no random class for [%s] (fmt=%s)." % (self.name, self.fmt))
-            
+            warning("no random class for [%s] (fmt=%s).", self.name, self.fmt)
+
 
 
 
@@ -113,7 +121,7 @@ class Emph(object):
         return hash(self.fld)
     def __eq__(self, other):
         return self.fld == other
-    
+
 
 class ActionField(object):
     __slots__ = ["_fld", "_action_method", "_privdata"]
@@ -153,12 +161,12 @@ class ConditionalField(object):
 
 class PadField(object):
     """Add bytes after the proxified field so that it ends at the specified
-       alignment from its begining"""
+       alignment from its beginning"""
     __slots__ = ["_fld", "_align", "_padwith"]
     def __init__(self, fld, align, padwith=None):
         self._fld = fld
         self._align = align
-        self._padwith = padwith or ""
+        self._padwith = padwith or b""
 
     def padlen(self, flen):
         return -flen%self._align
@@ -169,12 +177,12 @@ class PadField(object):
         return remain[padlen:], val
 
     def addfield(self, pkt, s, val):
-        sval = self._fld.addfield(pkt, "", val)
+        sval = self._fld.addfield(pkt, b"", val)
         return s+sval+struct.pack("%is" % (self.padlen(len(sval))), self._padwith)
-    
+
     def __getattr__(self, attr):
         return getattr(self._fld,attr)
-        
+
 
 class DestField(Field):
     __slots__ = ["defaultdst"]
@@ -186,7 +194,7 @@ class DestField(Field):
         for addr, condition in self.bindings.get(pkt.payload.__class__, []):
             try:
                 if all(pkt.payload.getfieldval(field) == value
-                       for field, value in condition.iteritems()):
+                       for field, value in six.iteritems(condition)):
                     return addr
             except AttributeError:
                 pass
@@ -201,12 +209,12 @@ class MACField(Field):
         Field.__init__(self, name, default, "6s")
     def i2m(self, pkt, x):
         if x is None:
-            return "\0\0\0\0\0\0"
+            return b"\0\0\0\0\0\0"
         return mac2str(x)
     def m2i(self, pkt, x):
         return str2mac(x)
     def any2i(self, pkt, x):
-        if type(x) is str and len(x) is 6:
+        if isinstance(x, bytes) and len(x) == 6:
             x = self.m2i(pkt, x)
         return x
     def i2repr(self, pkt, x):
@@ -223,13 +231,15 @@ class IPField(Field):
     def __init__(self, name, default):
         Field.__init__(self, name, default, "4s")
     def h2i(self, pkt, x):
-        if isinstance(x, basestring):
+        if isinstance(x, bytes):
+            x = plain_str(x)
+        if isinstance(x, str):
             try:
                 inet_aton(x)
             except socket.error:
                 x = Net(x)
-        elif type(x) is list:
-            x = [self.h2i(pkt, n) for n in x] 
+        elif isinstance(x, list):
+            x = [self.h2i(pkt, n) for n in x]
         return x
     def resolve(self, x):
         if self in conf.resolve:
@@ -248,7 +258,8 @@ class IPField(Field):
     def any2i(self, pkt, x):
         return self.h2i(pkt,x)
     def i2repr(self, pkt, x):
-        return self.resolve(self.i2h(pkt, x))
+        r = self.resolve(self.i2h(pkt, x))
+        return r if isinstance(r, str) else repr(r)
     def randval(self):
         return RandIP()
 
@@ -257,35 +268,34 @@ class SourceIPField(IPField):
     def __init__(self, name, dstname):
         IPField.__init__(self, name, None)
         self.dstname = dstname
+    def __findaddr(self, pkt):
+        if conf.route is None:
+            # unused import, only to initialize conf.route
+            import scapy.route
+        dst = ("0.0.0.0" if self.dstname is None
+               else getattr(pkt, self.dstname))
+        if isinstance(dst, (Gen, list)):
+            r = {conf.route.route(str(daddr)) for daddr in dst}
+            if len(r) > 1:
+                warning("More than one possible route for %r" % (dst,))
+            return min(r)[1]
+        return conf.route.route(dst)[1]
     def i2m(self, pkt, x):
         if x is None:
-            iff,x,gw = pkt.route()
-            if x is None:
-                x = "0.0.0.0"
+            x = self.__findaddr(pkt)
         return IPField.i2m(self, pkt, x)
     def i2h(self, pkt, x):
         if x is None:
-            if conf.route is None:
-                # unused import, only to initialize conf.route
-                import scapy.route
-            dst=getattr(pkt,self.dstname)
-            if isinstance(dst,Gen):
-                r = map(conf.route.route, dst)
-                r.sort()
-                if r[0] != r[-1]:
-                    warning("More than one possible route for %s"%repr(dst))
-                iff,x,gw = r[0]
-            else:
-                iff,x,gw = conf.route.route(dst)
+            x = self.__findaddr(pkt)
         return IPField.i2h(self, pkt, x)
 
-    
+
 
 
 class ByteField(Field):
     def __init__(self, name, default):
         Field.__init__(self, name, default, "B")
-        
+
 class XByteField(ByteField):
     def i2repr(self, pkt, x):
         return lhex(self.i2h(pkt, x))
@@ -300,7 +310,7 @@ class X3BytesField(XByteField):
     def addfield(self, pkt, s, val):
         return s+struct.pack(self.fmt, self.i2m(pkt,val))[1:4]
     def getfield(self, pkt, s):
-        return  s[3:], self.m2i(pkt, struct.unpack(self.fmt, "\x00"+s[:3])[0])
+        return  s[3:], self.m2i(pkt, struct.unpack(self.fmt, b"\x00"+s[:3])[0])
 
 class ThreeBytesField(X3BytesField, ByteField):
     def i2repr(self, pkt, x):
@@ -309,6 +319,118 @@ class ThreeBytesField(X3BytesField, ByteField):
 class SignedByteField(Field):
     def __init__(self, name, default):
         Field.__init__(self, name, default, "b")
+
+
+class FieldValueRangeException(Scapy_Exception):
+    pass
+
+
+class FieldAttributeException(Scapy_Exception):
+    pass
+
+
+class YesNoByteField(ByteField):
+    """
+    byte based flag field that shows representation of its number based on a given association
+
+    in its default configuration the following representation is generated:
+        x == 0 : 'no'
+        x != 0 : 'yes'
+
+    in more sophisticated use-cases (e.g. yes/no/invalid) one can use the config attribute to configure
+    key-value, key-range and key-value-set associations that will be used to generate the values representation.
+
+    a range is given by a tuple (<first-val>, <last-value>) including the last value. a single-value tuple
+    is treated as scalar.
+
+    a list defines a set of (probably non consecutive) values that should be associated to a given key.
+
+    all values not associated with a key will be shown as number of type unsigned byte.
+
+    config = {
+                'no' : 0,
+                'foo' : (1,22),
+                'yes' : 23,
+                'bar' : [24,25, 42, 48, 87, 253]
+             }
+
+    generates the following representations:
+
+        x == 0 : 'no'
+        x == 15: 'foo'
+        x == 23: 'yes'
+        x == 42: 'bar'
+        x == 43: 43
+
+    using the config attribute one could also revert the stock-yes-no-behavior:
+
+    config = {
+                'yes' : 0,
+                'no' : (1,255)
+             }
+
+    will generate the following value representation:
+
+        x == 0 : 'yes'
+        x != 0 : 'no'
+
+    """
+    __slots__ = ['eval_fn']
+
+    def _build_config_representation(self, config):
+        assoc_table = dict()
+        for key in config:
+            value_spec = config[key]
+
+            value_spec_type = type(value_spec)
+
+            if value_spec_type is int:
+                if value_spec < 0 or value_spec > 255:
+                    raise FieldValueRangeException('given field value {} invalid - '
+                                                   'must be in range [0..255]'.format(value_spec))
+                assoc_table[value_spec] = key
+
+            elif value_spec_type is list:
+                for value in value_spec:
+                    if value < 0 or value > 255:
+                        raise FieldValueRangeException('given field value {} invalid - '
+                                                       'must be in range [0..255]'.format(value))
+                    assoc_table[value] = key
+
+            elif value_spec_type is tuple:
+                value_spec_len = len(value_spec)
+                if value_spec_len != 2:
+                    raise FieldAttributeException('invalid length {} of given config item tuple {} - must be '
+                                                  '(<start-range>, <end-range>).'.format(value_spec_len, value_spec))
+
+                value_range_start = value_spec[0]
+                if value_range_start < 0 or value_range_start > 255:
+                    raise FieldValueRangeException('given field value {} invalid - '
+                                                   'must be in range [0..255]'.format(value_range_start))
+
+                value_range_end = value_spec[1]
+                if value_range_end < 0 or value_range_end > 255:
+                    raise FieldValueRangeException('given field value {} invalid - '
+                                                   'must be in range [0..255]'.format(value_range_end))
+
+                for value in range(value_range_start, value_range_end + 1):
+
+                    assoc_table[value] = key
+
+        self.eval_fn = lambda x: assoc_table[x] if x in assoc_table else x
+
+    def __init__(self, name, default, config=None, *args, **kargs):
+
+        if not config:
+            # this represents the common use case and therefore it is kept small
+            self.eval_fn = lambda x: 'no' if x == 0 else 'yes'
+        else:
+            self._build_config_representation(config)
+        ByteField.__init__(self, name, default, *args, **kargs)
+
+    def i2repr(self, pkt, x):
+        return self.eval_fn(x)
+
 
 class ShortField(Field):
     def __init__(self, name, default):
@@ -356,6 +478,10 @@ class LongField(Field):
     def __init__(self, name, default):
         Field.__init__(self, name, default, "Q")
 
+class LELongField(LongField):
+    def __init__(self, name, default):
+        Field.__init__(self, name, default, "<Q")
+
 class XLongField(LongField):
     def i2repr(self, pkt, x):
         return lhex(self.i2h(pkt, x))
@@ -373,20 +499,29 @@ class StrField(Field):
     __slots__ = ["remain"]
     def __init__(self, name, default, fmt="H", remain=0):
         Field.__init__(self,name,default,fmt)
-        self.remain = remain        
+        self.remain = remain
     def i2len(self, pkt, i):
         return len(i)
+    def any2i(self, pkt, x):
+        if isinstance(x, str if six.PY3 else unicode):
+            x = raw(x)
+        return super(StrField, self).any2i(pkt, x)
+    def i2repr(self, pkt, x):
+        val = super(StrField, self).i2repr(pkt, x)
+        if val[:2] in ['b"', "b'"]:
+            return val[1:]
+        return val
     def i2m(self, pkt, x):
         if x is None:
-            x = ""
-        elif type(x) is not str:
-            x=str(x)
+            return b""
+        if not isinstance(x, bytes):
+            return raw(x)
         return x
     def addfield(self, pkt, s, val):
-        return s+self.i2m(pkt, val)
+        return s + self.i2m(pkt, val)
     def getfield(self, pkt, s):
         if self.remain == 0:
-            return "",self.m2i(pkt, s)
+            return b"", self.m2i(pkt, s)
         else:
             return s[-self.remain:],self.m2i(pkt, s[:-self.remain])
     def randval(self):
@@ -399,18 +534,20 @@ class PacketField(StrField):
         StrField.__init__(self, name, default, remain=remain)
         self.cls = cls
     def i2m(self, pkt, i):
-        return str(i)
+        if i is None:
+            return b""
+        return raw(i)
     def m2i(self, pkt, m):
         return self.cls(m)
     def getfield(self, pkt, s):
         i = self.m2i(pkt, s)
-        remain = ""
+        remain = b""
         if conf.padding_layer in i:
             r = i[conf.padding_layer]
             del(r.underlayer.payload)
             remain = r.load
         return remain,i
-    
+
 class PacketLenField(PacketField):
     __slots__ = ["length_from"]
     def __init__(self, name, default, cls, length_from=None):
@@ -428,23 +565,82 @@ class PacketLenField(PacketField):
 
 
 class PacketListField(PacketField):
-    __slots__ = ["count_from", "length_from"]
+    """ PacketListField represents a series of Packet instances that might occur right in the middle of another Packet
+    field list.
+    This field type may also be used to indicate that a series of Packet instances have a sibling semantic instead of
+    a parent/child relationship (i.e. a stack of layers).
+    """
+    __slots__ = ["count_from", "length_from", "next_cls_cb"]
     islist = 1
-    def __init__(self, name, default, cls, count_from=None, length_from=None):
+    def __init__(self, name, default, cls=None, count_from=None, length_from=None, next_cls_cb=None):
+        """ The number of Packet instances that are dissected by this field can be parametrized using one of three
+        different mechanisms/parameters:
+            * count_from: a callback that returns the number of Packet instances to dissect. The callback prototype is:
+            count_from(pkt:Packet) -> int
+            * length_from: a callback that returns the number of bytes that must be dissected by this field. The
+            callback prototype is:
+            length_from(pkt:Packet) -> int
+            * next_cls_cb: a callback that enables a Scapy developer to dynamically discover if another Packet instance
+            should be dissected or not. See below for this callback prototype.
+
+        The bytes that are not consumed during the dissection of this field are passed to the next field of the current
+        packet.
+
+        For the serialization of such a field, the list of Packets that are contained in a PacketListField can be
+        heterogeneous and is unrestricted.
+
+        The type of the Packet instances that are dissected with this field is specified or discovered using one of the
+        following mechanism:
+            * the cls parameter may contain a callable that returns an instance of the dissected Packet. This
+                may either be a reference of a Packet subclass (e.g. DNSRROPT in layers/dns.py) to generate an
+                homogeneous PacketListField or a function deciding the type of the Packet instance
+                (e.g. _CDPGuessAddrRecord in contrib/cdp.py)
+            * the cls parameter may contain a class object with a defined "dispatch_hook" classmethod. That
+                method must return a Packet instance. The dispatch_hook callmethod must implement the following prototype:
+                dispatch_hook(cls, _pkt:Optional[Packet], *args, **kargs) -> Packet_metaclass
+                The _pkt parameter may contain a reference to the packet instance containing the PacketListField that is
+                being dissected.
+            * the next_cls_cb parameter may contain a callable whose prototype is:
+                cbk(pkt:Packet, lst:List[Packet], cur:Optional[Packet], remain:str) -> Optional[Packet_metaclass]
+                The pkt argument contains a reference to the Packet instance containing the PacketListField that is
+                being dissected. The lst argument is the list of all Packet instances that were previously parsed during
+                the current PacketListField dissection, save for the very last Packet instance. The cur argument
+                contains a reference to that very last parsed Packet instance. The remain argument contains the bytes
+                that may still be consumed by the current PacketListField dissection operation. This callback returns
+                either the type of the next Packet to dissect or None to indicate that no more Packet are to be
+                dissected.
+                These four arguments allows a variety of dynamic discovery of the number of Packet to dissect and of the
+                type of each one of these Packets, including: type determination based on current Packet instances or
+                its underlayers, continuation based on the previously parsed Packet instances within that
+                PacketListField, continuation based on a look-ahead on the bytes to be dissected...
+
+        The cls and next_cls_cb parameters are semantically exclusive, although one could specify both. If both are
+        specified, cls is silently ignored. The same is true for count_from and next_cls_cb.
+        length_from and next_cls_cb are compatible and the dissection will end, whichever of the two stop conditions
+        comes first.
+
+        @param name: the name of the field
+        @param default: the default value of this field; generally an empty Python list
+        @param cls: either a callable returning a Packet instance or a class object defining a dispatch_hook class
+            method
+        @param count_from: a callback returning the number of Packet instances to dissect
+        @param length_from: a callback returning the number of bytes to dissect
+        @param next_cls_cb: a callback returning either None or the type of the next Packet to dissect.
+        """
         if default is None:
             default = []  # Create a new list for each instance
         PacketField.__init__(self, name, default, cls)
         self.count_from = count_from
         self.length_from = length_from
-
+        self.next_cls_cb = next_cls_cb
 
     def any2i(self, pkt, x):
-        if type(x) is not list:
+        if not isinstance(x, list):
             return [x]
         else:
             return x
     def i2count(self, pkt, val):
-        if type(val) is list:
+        if isinstance(val, list):
             return len(val)
         return 1
     def i2len(self, pkt, val):
@@ -453,16 +649,19 @@ class PacketListField(PacketField):
         if x is None:
             return None
         else:
-            return [p if isinstance(p, basestring) else p.copy() for p in x]
+            return [p if isinstance(p, six.string_types) else p.copy() for p in x]
     def getfield(self, pkt, s):
-        c = l = None
+        c = l = cls = None
         if self.length_from is not None:
             l = self.length_from(pkt)
         elif self.count_from is not None:
             c = self.count_from(pkt)
-            
+        if self.next_cls_cb is not None:
+            cls = self.next_cls_cb(pkt, [], None, s)
+            c = 1
+
         lst = []
-        ret = ""
+        ret = b""
         remain = s
         if l is not None:
             remain,ret = s[:l],s[l:]
@@ -472,23 +671,30 @@ class PacketListField(PacketField):
                     break
                 c -= 1
             try:
-                p = self.m2i(pkt,remain)
+                if cls is not None:
+                    p = cls(remain)
+                else:
+                    p = self.m2i(pkt, remain)
             except Exception:
                 if conf.debug_dissector:
                     raise
                 p = conf.raw_layer(load=remain)
-                remain = ""
+                remain = b""
             else:
                 if conf.padding_layer in p:
                     pad = p[conf.padding_layer]
                     remain = pad.load
                     del(pad.underlayer.payload)
+                    if self.next_cls_cb is not None:
+                        cls = self.next_cls_cb(pkt, lst, p, remain)
+                        if cls is not None:
+                            c += 1
                 else:
-                    remain = ""
+                    remain = b""
             lst.append(p)
         return remain+ret,lst
     def addfield(self, pkt, s, val):
-        return s+"".join(map(str, val))
+        return s + b"".join(raw(v) for v in val)
 
 
 class StrFixedLenField(StrField):
@@ -499,9 +705,9 @@ class StrFixedLenField(StrField):
         if length is not None:
             self.length_from = lambda pkt,length=length: length
     def i2repr(self, pkt, v):
-        if type(v) is str:
-            v = v.rstrip("\0")
-        return repr(v)
+        if isinstance(v, bytes):
+            v = v.rstrip(b"\0")
+        return super(StrFixedLenField, self).i2repr(pkt, v)
     def getfield(self, pkt, s):
         l = self.length_from(pkt)
         return s[l:], self.m2i(pkt,s[:l])
@@ -521,7 +727,7 @@ class StrFixedLenEnumField(StrFixedLenField):
         StrFixedLenField.__init__(self, name, default, length=length, length_from=length_from)
         self.enum = enum
     def i2repr(self, pkt, v):
-        r = v.rstrip("\0")
+        r = v.rstrip("\0" if isinstance(v, str) else b"\0")
         rr = repr(r)
         if v in self.enum:
             rr = "%s (%s)" % (rr, self.enum[v])
@@ -533,17 +739,17 @@ class NetBIOSNameField(StrFixedLenField):
     def __init__(self, name, default, length=31):
         StrFixedLenField.__init__(self, name, default, length)
     def i2m(self, pkt, x):
-        l = self.length_from(pkt)/2
+        l = self.length_from(pkt)//2
         if x is None:
-            x = ""
-        x += " "*(l)
+            x = b""
+        x += b" "*(l)
         x = x[:l]
-        x = "".join(map(lambda x: chr(0x41+(ord(x)>>4))+chr(0x41+(ord(x)&0xf)), x))
-        x = " "+x
+        x = b"".join(chb(0x41 + orb(b)>>4) + chb(0x41 + orb(b)&0xf) for b in x)
+        x = b" "+x
         return x
     def m2i(self, pkt, x):
-        x = x.strip("\x00").strip(" ")
-        return "".join(map(lambda x,y: chr((((ord(x)-1)&0xf)<<4)+((ord(y)-1)&0xf)), x[::2],x[1::2]))
+        x = x.strip(b"\x00").strip(b" ")
+        return b"".join(map(lambda x,y: chb((((orb(x)-1)&0xf)<<4)+((orb(y)-1)&0xf)), x[::2],x[1::2]))
 
 class StrLenField(StrField):
     __slots__ = ["length_from"]
@@ -553,10 +759,40 @@ class StrLenField(StrField):
     def getfield(self, pkt, s):
         l = self.length_from(pkt)
         return s[l:], self.m2i(pkt,s[:l])
-    
+
+class XStrField(StrField):
+    """
+    StrField which value is printed as hexadecimal.
+    """
+
+    def i2repr(self, pkt, x):
+        if x is None:
+            return repr(x)
+        return bytes_hex(x).decode()
+
+class XStrLenField(StrLenField):
+    """
+    StrLenField which value is printed as hexadecimal.
+    """
+
+    def i2repr(self, pkt, x):
+        if not x:
+            return repr(x)
+        return bytes_hex(x[:self.length_from(pkt)]).decode()
+
+class XStrFixedLenField(StrFixedLenField):
+    """
+    StrFixedLenField which value is printed as hexadecimal.
+    """
+
+    def i2repr(self, pkt, x):
+        if not x:
+            return repr(x)
+        return bytes_hex(x[:self.length_from(pkt)]).decode()
+
 class StrLenFieldUtf16(StrLenField):
     def h2i(self, pkt, x):
-        return x.encode('utf-16')[2:]
+        return plain_str(x).encode('utf-16')[2:]
     def i2h(self, pkt, x):
         return x.decode('utf-16')
 
@@ -566,7 +802,7 @@ class BoundStrLenField(StrLenField):
         StrLenField.__init__(self, name, default, fld, length_from)
         self.minlen = minlen
         self.maxlen = maxlen
-    
+
     def randval(self):
         return RandBin(RandNum(self.minlen, self.maxlen))
 
@@ -580,25 +816,25 @@ class FieldListField(Field):
         Field.__init__(self, name, default)
         self.count_from = count_from
         self.length_from = length_from
-            
+
     def i2count(self, pkt, val):
-        if type(val) is list:
+        if isinstance(val, list):
             return len(val)
         return 1
     def i2len(self, pkt, val):
-        return sum( self.field.i2len(pkt,v) for v in val )
-    
+        return int(sum(self.field.i2len(pkt,v) for v in val))
+
     def i2m(self, pkt, val):
         if val is None:
             val = []
         return val
     def any2i(self, pkt, x):
-        if type(x) is not list:
+        if not isinstance(x, list):
             return [self.field.any2i(pkt, x)]
         else:
-            return map(lambda e, pkt=pkt: self.field.any2i(pkt, e), x)
+            return [self.field.any2i(pkt, e) for e in x]
     def i2repr(self, pkt, x):
-        return map(lambda e, pkt=pkt: self.field.i2repr(pkt,e), x)
+        return "[%s]" % ", ".join(self.field.i2repr(pkt, v) for v in x)
     def addfield(self, pkt, s, val):
         val = self.i2m(pkt, val)
         for v in val:
@@ -612,10 +848,10 @@ class FieldListField(Field):
             c = self.count_from(pkt)
 
         val = []
-        ret=""
+        ret = b""
         if l is not None:
             s,ret = s[:l],s[l:]
-            
+
         while s:
             if c is not None:
                 if c <= 0:
@@ -648,15 +884,15 @@ class FieldLenField(Field):
 
 class StrNullField(StrField):
     def addfield(self, pkt, s, val):
-        return s+self.i2m(pkt, val)+"\x00"
+        return s+self.i2m(pkt, val)+b"\x00"
     def getfield(self, pkt, s):
-        l = s.find("\x00")
+        l = s.find(b"\x00")
         if l < 0:
             #XXX \x00 not found
-            return "",s
+            return b"",s
         return s[l+1:],self.m2i(pkt, s[:l])
     def randval(self):
-        return RandTermString(RandNum(0,1200),"\x00")
+        return RandTermString(RandNum(0,1200),b"\x00")
 
 class StrStopField(StrField):
     __slots__ = ["stop", "additionnal"]
@@ -667,7 +903,7 @@ class StrStopField(StrField):
     def getfield(self, pkt, s):
         l = s.find(self.stop)
         if l < 0:
-            return "",s
+            return b"",s
 #            raise Scapy_Exception,"StrStopField: stop value [%s] not found" %stop
         l += len(self.stop)+self.additionnal
         return s[l:],s[:l]
@@ -675,9 +911,13 @@ class StrStopField(StrField):
         return RandTermString(RandNum(0,1200),self.stop)
 
 class LenField(Field):
+    __slots__ = ["adjust"]
+    def __init__(self, name, default, fmt="H", adjust=lambda x: x):
+        Field.__init__(self, name, default, fmt)
+        self.adjust = adjust
     def i2m(self, pkt, x):
         if x is None:
-            x = len(pkt.payload)
+            x = self.adjust(len(pkt.payload))
         return x
 
 class BCDFloatField(Field):
@@ -690,18 +930,20 @@ class BitField(Field):
     __slots__ = ["rev", "size"]
     def __init__(self, name, default, size):
         Field.__init__(self, name, default)
-        self.rev = size < 0 
+        self.rev = size < 0
         self.size = abs(size)
     def reverse(self, val):
         if self.size == 16:
-            val = socket.ntohs(val)
+            # Replaces socket.ntohs (but work on both little/big endian)
+            val = struct.unpack('>H',struct.pack('<H', int(val)))[0]
         elif self.size == 32:
-            val = socket.ntohl(val)
+            # Same here but for socket.ntohl
+            val = struct.unpack('>I',struct.pack('<I', int(val)))[0]
         return val
-        
+
     def addfield(self, pkt, s, val):
         val = self.i2m(pkt, val)
-        if type(s) is tuple:
+        if isinstance(s, tuple):
             s,bitsdone,v = s
         else:
             bitsdone = 0
@@ -709,34 +951,34 @@ class BitField(Field):
         if self.rev:
             val = self.reverse(val)
         v <<= self.size
-        v |= val & ((1L<<self.size) - 1)
+        v |= val & ((1<<self.size) - 1)
         bitsdone += self.size
         while bitsdone >= 8:
             bitsdone -= 8
             s = s+struct.pack("!B", v >> bitsdone)
-            v &= (1L<<bitsdone)-1
+            v &= (1<<bitsdone)-1
         if bitsdone:
             return s,bitsdone,v
         else:
             return s
     def getfield(self, pkt, s):
-        if type(s) is tuple:
+        if isinstance(s, tuple):
             s,bn = s
         else:
             bn = 0
         # we don't want to process all the string
-        nb_bytes = (self.size+bn-1)/8 + 1
+        nb_bytes = (self.size+bn-1)//8 + 1
         w = s[:nb_bytes]
 
         # split the substring byte by byte
-        bytes = struct.unpack('!%dB' % nb_bytes , w)
+        _bytes = struct.unpack('!%dB' % nb_bytes , w)
 
-        b = 0L
-        for c in xrange(nb_bytes):
-            b |= long(bytes[c]) << (nb_bytes-c-1)*8
+        b = 0
+        for c in range(nb_bytes):
+            b |= int(_bytes[c]) << (nb_bytes-c-1)*8
 
         # get rid of high order bits
-        b &= (1L << (nb_bytes*8-bn)) - 1
+        b &= (1 << (nb_bytes*8-bn)) - 1
 
         # remove low order bits
         b = b >> (nb_bytes*8 - self.size - bn)
@@ -745,7 +987,7 @@ class BitField(Field):
             b = self.reverse(b)
 
         bn += self.size
-        s = s[bn/8:]
+        s = s[bn//8:]
         bn = bn%8
         b = self.m2i(pkt, b)
         if bn:
@@ -754,6 +996,8 @@ class BitField(Field):
             return s,b
     def randval(self):
         return RandNum(0,2**self.size-1)
+    def i2len(self, pkt, x):
+        return float(self.size)/8
 
 
 class BitFieldLenField(BitField):
@@ -764,7 +1008,7 @@ class BitFieldLenField(BitField):
         self.count_of = count_of
         self.adjust = adjust
     def i2m(self, pkt, x):
-        return FieldLenField.i2m.im_func(self, pkt, x)
+        return (FieldLenField.i2m.__func__ if six.PY2 else FieldLenField.i2m)(self, pkt, x)
 
 
 class XBitField(BitField):
@@ -774,50 +1018,92 @@ class XBitField(BitField):
 
 class _EnumField(Field):
     def __init__(self, name, default, enum, fmt = "H"):
-        i2s = self.i2s = {}
-        s2i = self.s2i = {}
-        if type(enum) is list:
-            keys = range(len(enum))
+        """ Initializes enum fields.
+
+        @param name:    name of this field
+        @param default: default value of this field
+        @param enum:    either a dict or a tuple of two callables. Dict keys are
+                        the internal values, while the dict values are the
+                        user-friendly representations. If the tuple is provided,
+                        the first callable receives the internal value as
+                        parameter and returns the user-friendly representation
+                        and the second callable does the converse. The first
+                        callable may return None to default to a literal string
+                        (repr()) representation.
+        @param fmt:     struct.pack format used to parse and serialize the
+                        internal value from and to machine representation.
+        """
+        if isinstance(enum, tuple):
+            self.i2s_cb = enum[0]
+            self.s2i_cb = enum[1]
+            self.i2s = None
+            self.s2i = None
         else:
-            keys = enum.keys()
-        if any(type(x) is str for x in keys):
-            i2s, s2i = s2i, i2s
-        for k in keys:
-            i2s[k] = enum[k]
-            s2i[enum[k]] = k
+            i2s = self.i2s = {}
+            s2i = self.s2i = {}
+            self.i2s_cb = None
+            self.s2i_cb = None
+            if isinstance(enum, list):
+                keys = range(len(enum))
+            elif isinstance(enum, DADict):
+                keys = enum.iterkeys()
+            else:
+                keys = list(enum)
+            if any(isinstance(x, str) for x in keys):
+                i2s, s2i = s2i, i2s
+            for k in keys:
+                i2s[k] = enum[k]
+                s2i[enum[k]] = k
         Field.__init__(self, name, default, fmt)
+
     def any2i_one(self, pkt, x):
-        if type(x) is str:
-            x = self.s2i[x]
+        if isinstance(x, str):
+            try:
+                x = self.s2i[x]
+            except TypeError:
+                x = self.s2i_cb(x)
         return x
+
     def i2repr_one(self, pkt, x):
-        if self not in conf.noenum and not isinstance(x,VolatileValue) and x in self.i2s:
-            return self.i2s[x]
+        if self not in conf.noenum and not isinstance(x,VolatileValue):
+            try:
+                return self.i2s[x]
+            except KeyError:
+                pass
+            except TypeError:
+                ret = self.i2s_cb(x)
+                if ret is not None:
+                    return ret
         return repr(x)
-    
+
     def any2i(self, pkt, x):
-        if type(x) is list:
-            return map(lambda z,pkt=pkt:self.any2i_one(pkt,z), x)
+        if isinstance(x, list):
+            return [self.any2i_one(pkt, z) for z in x]
         else:
-            return self.any2i_one(pkt,x)        
+            return self.any2i_one(pkt,x)
+
     def i2repr(self, pkt, x):
-        if type(x) is list:
-            return map(lambda z,pkt=pkt:self.i2repr_one(pkt,z), x)
+        if isinstance(x, list):
+            return [self.i2repr_one(pkt, z) for z in x]
         else:
             return self.i2repr_one(pkt,x)
 
 class EnumField(_EnumField):
-    __slots__ = ["i2s", "s2i"]
+    __slots__ = ["i2s", "s2i", "s2i_cb", "i2s_cb"]
 
 class CharEnumField(EnumField):
     def __init__(self, name, default, enum, fmt = "1s"):
         EnumField.__init__(self, name, default, enum, fmt)
-        k = self.i2s.keys()
-        if k and len(k[0]) != 1:
-            self.i2s,self.s2i = self.s2i,self.i2s
+        if self.i2s is not None:
+            k = list(self.i2s)
+            if k and len(k[0]) != 1:
+                self.i2s,self.s2i = self.s2i,self.i2s
     def any2i_one(self, pkt, x):
         if len(x) != 1:
-            x = self.s2i[x]
+            if self.s2i is None:
+                x = self.s2i_cb(x)
+            else:
+                x = self.s2i[x]
         return x
 
 class BitEnumField(BitField, _EnumField):
@@ -832,6 +1118,7 @@ class BitEnumField(BitField, _EnumField):
         return _EnumField.i2repr(self, pkt, x)
 
 class ShortEnumField(EnumField):
+    __slots__ = EnumField.__slots__
     def __init__(self, name, default, enum):
         EnumField.__init__(self, name, default, enum, "H")
 
@@ -859,25 +1146,32 @@ class LEIntEnumField(EnumField):
 
 class XShortEnumField(ShortEnumField):
     def i2repr_one(self, pkt, x):
-        if self not in conf.noenum and not isinstance(x,VolatileValue) and x in self.i2s:
-            return self.i2s[x]
+        if self not in conf.noenum and not isinstance(x,VolatileValue):
+            try:
+                return self.i2s[x]
+            except KeyError:
+                pass
+            except TypeError:
+                ret = self.i2s_cb(x)
+                if ret is not None:
+                    return ret
         return lhex(x)
 
 class _MultiEnumField(_EnumField):
     def __init__(self, name, default, enum, depends_on, fmt = "H"):
-        
+
         self.depends_on = depends_on
         self.i2s_multi = enum
         self.s2i_multi = {}
         self.s2i_all = {}
         for m in enum:
             self.s2i_multi[m] = s2i = {}
-            for k,v in enum[m].iteritems():
+            for k,v in six.iteritems(enum[m]):
                 s2i[v] = k
                 self.s2i_all[v] = k
         Field.__init__(self, name, default, fmt)
     def any2i_one(self, pkt, x):
-        if type (x) is str:
+        if isinstance(x, str):
             v = self.depends_on(pkt)
             if v in self.s2i_multi:
                 s2i = self.s2i_multi[v]
@@ -935,6 +1229,93 @@ class LEFieldLenField(FieldLenField):
         FieldLenField.__init__(self, name, default, length_of=length_of, fmt=fmt, count_of=count_of, fld=fld, adjust=adjust)
 
 
+class FlagValue(object):
+    __slots__ = ["value", "names", "multi"]
+    def _fixvalue(self, value):
+        if isinstance(value, six.string_types):
+            value = value.split('+') if self.multi else list(value)
+        if isinstance(value, list):
+            y = 0
+            for i in value:
+                y |= 1 << self.names.index(i)
+            value = y
+        return None if value is None else int(value)
+    def __init__(self, value, names):
+        self.multi = isinstance(names, list)
+        self.names = names
+        self.value = self._fixvalue(value)
+    def __hash__(self):
+        return hash(self.value)
+    def __int__(self):
+        return self.value
+    def __eq__(self, other):
+        return self.value == self._fixvalue(other)
+    def __lt__(self, other):
+        return self.value < self._fixvalue(other)
+    def __le__(self, other):
+        return self.value <= self._fixvalue(other)
+    def __gt__(self, other):
+        return self.value > self._fixvalue(other)
+    def __ge__(self, other):
+        return self.value >= self._fixvalue(other)
+    def __ne__(self, other):
+        return self.value != self._fixvalue(other)
+    def __and__(self, other):
+        return self.__class__(self.value & self._fixvalue(other), self.names)
+    __rand__ = __and__
+    def __or__(self, other):
+        return self.__class__(self.value | self._fixvalue(other), self.names)
+    __ror__ = __or__
+    def __lshift__(self, other):
+        return self.value << self._fixvalue(other)
+    def __rshift__(self, other):
+        return self.value >> self._fixvalue(other)
+    def __nonzero__(self):
+        return bool(self.value)
+    __bool__ = __nonzero__
+    def flagrepr(self):
+        warning("obj.flagrepr() is obsolete. Use str(obj) instead.")
+        return str(self)
+    def __str__(self):
+        i = 0
+        r = []
+        x = int(self)
+        while x:
+            if x & 1:
+                r.append(self.names[i])
+            i += 1
+            x >>= 1
+        return ("+" if self.multi else "").join(r)
+    def __repr__(self):
+        return "<Flag %d (%s)>" % (self, self)
+    def __deepcopy__(self, memo):
+        return self.__class__(int(self), self.names)
+    def __getattr__(self, attr):
+        if attr in self.__slots__:
+            return super(FlagValue, self).__getattr__(attr)
+        try:
+            if self.multi:
+                return bool((2 ** self.names.index(attr)) & int(self))
+            return all(bool((2 ** self.names.index(flag)) & int(self))
+                       for flag in attr)
+        except ValueError:
+            return super(FlagValue, self).__getattr__(attr)
+    def __setattr__(self, attr, value):
+        if attr == "value" and not isinstance(value, six.integer_types):
+            raise ValueError(value)
+        if attr in self.__slots__:
+            return super(FlagValue, self).__setattr__(attr, value)
+        if attr in self.names:
+            if value:
+                self.value |= (2 ** self.names.index(attr))
+            else:
+                self.value &= ~(2 ** self.names.index(attr))
+        else:
+            return super(FlagValue, self).__setattr__(attr, value)
+    def copy(self):
+        return self.__class__(self.value, self.names)
+
+
 class FlagsField(BitField):
     """ Handle Flag type field
 
@@ -956,41 +1337,121 @@ class FlagsField(BitField):
    :param size: number of bits in the field
    :param names: (list or dict) label for each flag, Least Significant Bit tag's name is written first
    """
+    ismutable = True
     __slots__ = ["multi", "names"]
+
     def __init__(self, name, default, size, names):
-        self.multi = type(names) is list
-        if self.multi:
-            self.names = map(lambda x:[x], names)
-        else:
-            self.names = names
+        self.multi = isinstance(names, list)
+        self.names = names
         BitField.__init__(self, name, default, size)
+
+    def _fixup_val(self, x):
+        """Returns a FlagValue instance when needed. Internal method, to be
+used in *2i() and i2*() methods.
+
+        """
+        if isinstance(x, (list, tuple)):
+            return type(x)(
+                v if v is None or isinstance(v, FlagValue)
+                else FlagValue(v, self.names)
+                for v in x
+            )
+        return x if x is None or isinstance(x, FlagValue) else FlagValue(x, self.names)
+
     def any2i(self, pkt, x):
-        if type(x) is str:
-            if self.multi:
-                x = map(lambda y:[y], x.split("+"))
-            y = 0
-            for i in x:
-                y |= 1 << self.names.index(i)
-            x = y
-        return x
+        return self._fixup_val(super(FlagsField, self).any2i(pkt, x))
+
+    def m2i(self, pkt, x):
+        return self._fixup_val(super(FlagsField, self).m2i(pkt, x))
+
+    def i2h(self, pkt, x):
+        return self._fixup_val(super(FlagsField, self).i2h(pkt, x))
+
     def i2repr(self, pkt, x):
-        if type(x) is list or type(x) is tuple:
-            return repr(x)
-        if self.multi:
-            r = []
-        else:
-            r = ""
-        i=0
-        while x:
-            if x & 1:
-                r += self.names[i]
-            i += 1
-            x >>= 1
-        if self.multi:
-            r = "+".join(r)
+        if isinstance(x, (list, tuple)):
+            return repr(type(x)(
+                None if v is None else str(self._fixup_val(v)) for v in x
+            ))
+        return None if x is None else str(self._fixup_val(x))
+
+
+MultiFlagsEntry = collections.namedtuple('MultiFlagEntry', ['short', 'long'])
+
+
+class MultiFlagsField(BitField):
+    __slots__ = FlagsField.__slots__ + ["depends_on"]
+
+    def __init__(self, name, default, size, names, depends_on):
+        self.names = names
+        self.depends_on = depends_on
+        super(MultiFlagsField, self).__init__(name, default, size)
+
+    def any2i(self, pkt, x):
+        assert isinstance(x, six.integer_types + (set,)), 'set expected'
+
+        if pkt is not None:
+            if isinstance(x, six.integer_types):
+                x = self.m2i(pkt, x)
+            else:
+                v = self.depends_on(pkt)
+                if v is not None:
+                    assert v in self.names, 'invalid dependency'
+                    these_names = self.names[v]
+                    s = set()
+                    for i in x:
+                        for val in six.itervalues(these_names):
+                            if val.short == i:
+                                s.add(i)
+                                break
+                        else:
+                            assert False, 'Unknown flag "{}" with this dependency'.format(i)
+                            continue
+                    x = s
+        return x
+
+    def i2m(self, pkt, x):
+        v = self.depends_on(pkt)
+        these_names = self.names.get(v, {})
+
+        r = 0
+        for flag_set in x:
+            for i, val in six.iteritems(these_names):
+                if val.short == flag_set:
+                    r |= 1 << i
+                    break
+            else:
+                r |= 1 << int(flag_set[len('bit '):])
         return r
 
-            
+    def m2i(self, pkt, x):
+        v = self.depends_on(pkt)
+        these_names = self.names.get(v, {})
+
+        r = set()
+        i = 0
+        while x:
+            if x & 1:
+                if i in these_names:
+                    r.add(these_names[i].short)
+                else:
+                    r.add('bit {}'.format(i))
+            x >>= 1
+            i += 1
+        return r
+
+    def i2repr(self, pkt, x):
+        v = self.depends_on(pkt)
+        these_names = self.names.get(v, {})
+
+        r = set()
+        for flag_set in x:
+            for i in six.itervalues(these_names):
+                if i.short == flag_set:
+                    r.add("{} ({})".format(i.long, i.short))
+                    break
+            else:
+                r.add(flag_set)
+        return repr(r)
 
 
 class FixedPointField(BitField):
@@ -1008,7 +1469,7 @@ class FixedPointField(BitField):
 
     def i2h(self, pkt, val):
         int_part = val >> self.frac_bits
-        frac_part = val & (1L << self.frac_bits) - 1
+        frac_part = val & (1 << self.frac_bits) - 1
         frac_part /= 2.0**self.frac_bits
         return int_part+frac_part
     def i2repr(self, pkt, val):
@@ -1026,11 +1487,11 @@ class _IPPrefixFieldBase(Field):
         self.ntoa = ntoa
         Field.__init__(self, name, default, "%is" % self.maxbytes)
         self.length_from = length_from
-    
+
     def _numbytes(self, pfxlen):
         wbits= self.wordbytes * 8
-        return ((pfxlen + (wbits - 1)) / wbits) * self.wordbytes
-    
+        return ((pfxlen + (wbits - 1)) // wbits) * self.wordbytes
+
     def h2i(self, pkt, x):
         # "fc00:1::1/64" -> ("fc00:1::1", 64)
         [pfx,pfxlen]= x.split('/')
@@ -1044,34 +1505,34 @@ class _IPPrefixFieldBase(Field):
         return "%s/%i" % (pfx,pfxlen)
 
     def i2m(self, pkt, x):
-        # ("fc00:1::1", 64) -> ("\xfc\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01", 64)
+        # ("fc00:1::1", 64) -> (b"\xfc\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01", 64)
         (pfx,pfxlen)= x
         s= self.aton(pfx);
         return (s[:self._numbytes(pfxlen)], pfxlen)
-    
+
     def m2i(self, pkt, x):
-        # ("\xfc\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01", 64) -> ("fc00:1::1", 64)
+        # (b"\xfc\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01", 64) -> ("fc00:1::1", 64)
         (s,pfxlen)= x
-        
+
         if len(s) < self.maxbytes:
-            s= s + ("\0" * (self.maxbytes - len(s)))
+            s= s + (b"\0" * (self.maxbytes - len(s)))
         return (self.ntoa(s), pfxlen)
-    
+
     def any2i(self, pkt, x):
         if x is None:
-            return (self.ntoa("\0"*self.maxbytes), 1)
-        
+            return (self.ntoa(b"\0"*self.maxbytes), 1)
+
         return self.h2i(pkt,x)
-    
+
     def i2len(self, pkt, x):
         (_,pfxlen)= x
         return pfxlen
-        
+
     def addfield(self, pkt, s, val):
         (rawpfx,pfxlen)= self.i2m(pkt,val)
         fmt= "!%is" % self._numbytes(pfxlen)
         return s+struct.pack(fmt, rawpfx)
-    
+
     def getfield(self, pkt, s):
         pfxlen= self.length_from(pkt)
         numbytes= self._numbytes(pfxlen)
@@ -1087,3 +1548,35 @@ class IPPrefixField(_IPPrefixFieldBase):
 class IP6PrefixField(_IPPrefixFieldBase):
     def __init__(self, name, default, wordbytes= 1, length_from= None):
         _IPPrefixFieldBase.__init__(self, name, default, wordbytes, 16, lambda a: inet_pton(socket.AF_INET6, a), lambda n: inet_ntop(socket.AF_INET6, n), length_from)
+
+class UTCTimeField(IntField):
+    __slots__ = ["epoch", "delta", "strf", "use_nano"]
+    def __init__(self, name, default, epoch=None, use_nano=False, strf="%a, %d %b %Y %H:%M:%S +0000"):
+        IntField.__init__(self, name, default)
+        mk_epoch = EPOCH if epoch is None else time.mktime(epoch)
+        self.epoch = mk_epoch
+        self.delta = mk_epoch - EPOCH
+        self.strf = strf
+        self.use_nano = use_nano
+    def i2repr(self, pkt, x):
+        if x is None:
+            x = 0
+        elif self.use_nano:
+            x = x/1e9
+        x = int(x) + self.delta
+        t = time.strftime(self.strf, time.gmtime(x))
+        return "%s (%d)" % (t, x)
+    def i2m(self, pkt, x):
+        return int(x) if x != None else 0
+
+class SecondsIntField(IntField):
+    __slots__ = ["use_msec"]
+    def __init__(self, name, default, use_msec=False):
+        IntField.__init__(self, name, default)
+        self.use_msec = use_msec
+    def i2repr(self, pkt, x):
+        if x is None:
+            x = 0
+        elif self.use_msec:
+            x = x/1e3
+        return "%s sec" % x

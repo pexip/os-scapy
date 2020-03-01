@@ -7,12 +7,22 @@
 Linux specific functions.
 """
 
-from __future__ import with_statement
-import sys,os,struct,socket,time
-from select import select
-from fcntl import ioctl
+from __future__ import absolute_import
 
-from scapy.arch.consts import LOOPBACK_NAME
+
+import array
+import ctypes
+from fcntl import ioctl
+import os
+from select import select
+import socket
+import struct
+import sys
+import time
+
+
+from scapy.compat import *
+from scapy.consts import LOOPBACK_NAME, IS_64BITS
 import scapy.utils
 import scapy.utils6
 from scapy.packet import Packet, Padding
@@ -21,7 +31,8 @@ from scapy.data import *
 from scapy.supersocket import SuperSocket
 import scapy.arch
 from scapy.error import warning, Scapy_Exception, log_interactive, log_loading
-from scapy.arch.common import get_if
+from scapy.arch.common import get_if, get_bpf_pointer
+from scapy.modules.six.moves import range
 
 
 
@@ -63,7 +74,6 @@ PACKET_MR_ALLMULTI     = 2
 SOL_PACKET = 263
 # From asm/socket.h
 SO_ATTACH_FILTER = 26
-SOL_SOCKET = 1
 
 # From net/route.h
 RTF_UP = 0x0001  # Route usable
@@ -98,12 +108,12 @@ def get_if_raw_addr(iff):
     try:
         return get_if(iff, SIOCGIFADDR)[20:24]
     except IOError:
-        return "\0\0\0\0"
+        return b"\0\0\0\0"
 
 
 def get_if_list():
     try:
-        f=open("/proc/net/dev","r")
+        f=open("/proc/net/dev", "rb")
     except IOError:
         warning("Can't open /proc/net/dev !")
         return []
@@ -111,6 +121,7 @@ def get_if_list():
     f.readline()
     f.readline()
     for l in f:
+        l = plain_str(l)
         lst.append(l.split(":")[0].strip())
     return lst
 def get_working_if():
@@ -132,32 +143,29 @@ def attach_filter(s, bpf_filter, iface):
     if not TCPDUMP:
         return
     try:
-        f = os.popen("%s -i %s -ddd -s 1600 '%s'" % (
+        f = os.popen("%s -i %s -ddd -s %d '%s'" % (
             conf.prog.tcpdump,
             conf.iface if iface is None else iface,
+            MTU,
             bpf_filter,
         ))
-    except OSError,msg:
-        log_interactive.warning("Failed to execute tcpdump: (%s)")
+    except OSError:
+        log_interactive.warning("Failed to attach filter.",
+                                exc_info=True)
         return
     lines = f.readlines()
-    if f.close():
-        raise Scapy_Exception("Filter parse error")
-    nb = int(lines[0])
-    bpf = ""
-    for l in lines[1:]:
-        bpf += struct.pack("HBBI",*map(long,l.split()))
-
-    # XXX. Argl! We need to give the kernel a pointer on the BPF,
-    # python object header seems to be 20 bytes. 36 bytes for x86 64bits arch.
-    if scapy.arch.X86_64 or scapy.arch.ARM_64:
-        bpfh = struct.pack("HL", nb, id(bpf)+36)
-    else:
-        bpfh = struct.pack("HI", nb, id(bpf)+20)  
-    s.setsockopt(SOL_SOCKET, SO_ATTACH_FILTER, bpfh)
+    ret = f.close()
+    if ret:
+        log_interactive.warning(
+            "Failed to attach filter: tcpdump returned %d", ret
+        )
+        return
+    
+    bp = get_bpf_pointer(lines)
+    s.setsockopt(socket.SOL_SOCKET, SO_ATTACH_FILTER, bp)
 
 def set_promisc(s,iff,val=1):
-    mreq = struct.pack("IHH8s", get_if_index(iff), PACKET_MR_PROMISC, 0, "")
+    mreq = struct.pack("IHH8s", get_if_index(iff), PACKET_MR_PROMISC, 0, b"")
     if val:
         cmd = PACKET_ADD_MEMBERSHIP
     else:
@@ -165,35 +173,92 @@ def set_promisc(s,iff,val=1):
     s.setsockopt(SOL_PACKET, cmd, mreq)
 
 
+def get_alias_address(iface_name, ip_mask, gw_str, metric):
+    """
+    Get the correct source IP address of an interface alias
+    """
+
+    # Detect the architecture
+    if scapy.consts.IS_64BITS:
+        offset, name_len = 16, 40
+    else:
+        offset, name_len = 32, 32
+
+    # Retrieve interfaces structures
+    sck = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    names = array.array('B', b'\0' * 4096)
+    ifreq = ioctl(sck.fileno(), SIOCGIFCONF,
+                  struct.pack("iL", len(names), names.buffer_info()[0]))
+
+    # Extract interfaces names
+    out = struct.unpack("iL", ifreq)[0]
+    names = names.tostring()
+    names = [names[i:i+offset].split(b'\0', 1)[0] for i in range(0, out, name_len)]
+
+    # Look for the IP address
+    for ifname in names:
+        # Only look for a matching interface name
+        if not ifname.decode("utf8").startswith(iface_name):
+            continue
+
+        # Retrieve and convert addresses
+        ifreq = ioctl(sck, SIOCGIFADDR, struct.pack("16s16x", ifname))
+        ifaddr = struct.unpack(">I", ifreq[20:24])[0]
+        ifreq = ioctl(sck, SIOCGIFNETMASK, struct.pack("16s16x", ifname))
+        msk = struct.unpack(">I", ifreq[20:24])[0]
+       
+        # Get the full interface name
+        ifname = plain_str(ifname)
+        if ':' in ifname:
+            ifname = ifname[:ifname.index(':')]
+        else:
+            continue
+
+        # Check if the source address is included in the network
+        if (ifaddr & msk) == ip_mask:
+            sck.close()
+            return (ifaddr & msk, msk, gw_str, ifname,
+                    scapy.utils.ltoa(ifaddr), metric)
+
+    sck.close()
+    return
+
 
 def read_routes():
     try:
-        f=open("/proc/net/route","r")
+        f=open("/proc/net/route", "rb")
     except IOError:
         warning("Can't open /proc/net/route !")
         return []
     routes = []
     s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    ifreq = ioctl(s, SIOCGIFADDR,struct.pack("16s16x",LOOPBACK_NAME))
-    addrfamily = struct.unpack("h",ifreq[16:18])[0]
-    if addrfamily == socket.AF_INET:
-        ifreq2 = ioctl(s, SIOCGIFNETMASK,struct.pack("16s16x",LOOPBACK_NAME))
-        msk = socket.ntohl(struct.unpack("I",ifreq2[20:24])[0])
-        dst = socket.ntohl(struct.unpack("I",ifreq[20:24])[0]) & msk
-        ifaddr = scapy.utils.inet_ntoa(ifreq[20:24])
-        routes.append((dst, msk, "0.0.0.0", LOOPBACK_NAME, ifaddr))
-    else:
-        warning("Interface lo: unkown address family (%i)"% addrfamily)
+    try:
+        ifreq = ioctl(s, SIOCGIFADDR, struct.pack("16s16x", scapy.consts.LOOPBACK_NAME.encode("utf8")))
+        addrfamily = struct.unpack("h", ifreq[16:18])[0]
+        if addrfamily == socket.AF_INET:
+            ifreq2 = ioctl(s, SIOCGIFNETMASK, struct.pack("16s16x", scapy.consts.LOOPBACK_NAME.encode("utf8")))
+            msk = socket.ntohl(struct.unpack("I", ifreq2[20:24])[0])
+            dst = socket.ntohl(struct.unpack("I", ifreq[20:24])[0]) & msk
+            ifaddr = scapy.utils.inet_ntoa(ifreq[20:24])
+            routes.append((dst, msk, "0.0.0.0", scapy.consts.LOOPBACK_NAME, ifaddr, 1))
+        else:
+            warning("Interface %s: unknown address family (%i)" % (scapy.consts.LOOPBACK_NAME, addrfamily))
+    except IOError as err:
+        if err.errno == 99:
+            warning("Interface %s: no address assigned" % scapy.consts.LOOPBACK_NAME)
+        else:
+            warning("Interface %s: failed to get address config (%s)" % (scapy.consts.LOOPBACK_NAME, str(err)))
 
     for l in f.readlines()[1:]:
-        iff,dst,gw,flags,x,x,x,msk,x,x,x = l.split()
+        l = plain_str(l)
+        iff,dst,gw,flags,x,x,metric,msk,x,x,x = l.split()
         flags = int(flags,16)
         if flags & RTF_UP == 0:
             continue
         if flags & RTF_REJECT:
             continue
         try:
-            ifreq = ioctl(s, SIOCGIFADDR,struct.pack("16s16x",iff))
+            ifreq = ioctl(s, SIOCGIFADDR,struct.pack("16s16x", iff.encode("utf8")))
         except IOError: # interface is present in routing tables but does not have any assigned IP
             ifaddr="0.0.0.0"
         else:
@@ -201,12 +266,25 @@ def read_routes():
             if addrfamily == socket.AF_INET:
                 ifaddr = scapy.utils.inet_ntoa(ifreq[20:24])
             else:
-                warning("Interface %s: unkown address family (%i)"%(iff, addrfamily))
+                warning("Interface %s: unkown address family (%i)", iff, addrfamily)
                 continue
-        routes.append((socket.htonl(long(dst,16))&0xffffffffL,
-                       socket.htonl(long(msk,16))&0xffffffffL,
-                       scapy.utils.inet_ntoa(struct.pack("I",long(gw,16))),
-                       iff, ifaddr))
+
+        # Attempt to detect an interface alias based on addresses inconsistencies
+        dst_int = socket.htonl(int(dst, 16)) & 0xffffffff
+        msk_int = socket.htonl(int(msk, 16)) & 0xffffffff
+        ifaddr_int = struct.unpack("!I", ifreq[20:24])[0]
+        gw_str = scapy.utils.inet_ntoa(struct.pack("I", int(gw, 16)))
+        metric = int(metric)
+
+        if ifaddr_int & msk_int != dst_int:
+            tmp_route = get_alias_address(iff, dst_int, gw_str, metric)
+            if tmp_route:
+                routes.append(tmp_route)
+            else:
+                routes.append((dst_int, msk_int, gw_str, iff, ifaddr, metric))
+
+        else:
+            routes.append((dst_int, msk_int, gw_str, iff, ifaddr, metric))
     
     f.close()
     return routes
@@ -226,22 +304,25 @@ def in6_getifaddr():
     """
     ret = []
     try:
-        f = open("/proc/net/if_inet6","r")
-    except IOError, err:    
+        fdesc = open("/proc/net/if_inet6", "rb")
+    except IOError as err:    
         return ret
-    l = f.readlines()
-    for i in l:
+    for line in fdesc:
         # addr, index, plen, scope, flags, ifname
-        tmp = i.split()
-        addr = struct.unpack('4s4s4s4s4s4s4s4s', tmp[0])
-        addr = scapy.utils6.in6_ptop(':'.join(addr))
-        ret.append((addr, int(tmp[3], 16), tmp[5])) # (addr, scope, iface)
+        tmp = plain_str(line).split()
+        addr = scapy.utils6.in6_ptop(
+            b':'.join(
+                struct.unpack('4s4s4s4s4s4s4s4s', tmp[0].encode())
+            ).decode()
+        )
+        # (addr, scope, iface)
+        ret.append((addr, int(tmp[3], 16), tmp[5]))
     return ret
 
 def read_routes6():
     try:
-        f = open("/proc/net/ipv6_route","r")
-    except IOError, err:
+        f = open("/proc/net/ipv6_route","rb")
+    except IOError as err:
         return []
     # 1. destination network
     # 2. destination prefix length
@@ -255,13 +336,15 @@ def read_routes6():
     # 10. device name
     routes = []
     def proc2r(p):
-        ret = struct.unpack('4s4s4s4s4s4s4s4s', p)
-        ret = ':'.join(ret)
+        ret = struct.unpack('4s4s4s4s4s4s4s4s', raw(p))
+        ret = b':'.join(ret).decode()
         return scapy.utils6.in6_ptop(ret)
     
     lifaddr = in6_getifaddr() 
     for l in f.readlines():
-        d,dp,s,sp,nh,m,rc,us,fl,dev = l.split()
+        l = plain_str(l)
+        d,dp,s,sp,nh,metric,rc,us,fl,dev = l.split()
+        metric = int(metric, 16)
         fl = int(fl, 16)
 
         if fl & RTF_UP == 0:
@@ -279,11 +362,11 @@ def read_routes6():
                 continue
             cset = ['::1']
         else:
-            devaddrs = filter(lambda x: x[2] == dev, lifaddr)
-            cset = scapy.utils6.construct_source_candidate_set(d, dp, devaddrs, LOOPBACK_NAME)
+            devaddrs = (x for x in lifaddr if x[2] == dev)
+            cset = scapy.utils6.construct_source_candidate_set(d, dp, devaddrs)
         
         if len(cset) != 0:
-            routes.append((d, dp, nh, dev, cset))
+            routes.append((d, dp, nh, dev, cset, metric))
     f.close()
     return routes   
 
@@ -304,9 +387,9 @@ else:
 
 
 def _flush_fd(fd):
-    if type(fd) is not int:
+    if hasattr(fd, 'fileno'):
         fd = fd.fileno()
-    while 1:
+    while True:
         r,w,e = select([fd],[],[],0)
         if r:
             os.read(fd,MTU)
@@ -341,11 +424,10 @@ class L3PacketSocket(SuperSocket):
         if self.promisc:
             if iface is None:
                 self.iff = get_if_list()
+            elif isinstance(iface, list):
+                self.iff = iface
             else:
-                if iface.__class__ is list:
-                    self.iff = iface
-                else:
-                    self.iff = [iface]
+                self.iff = [iface]
             for i in self.iff:
                 set_promisc(self.ins, i)
     def close(self):
@@ -368,7 +450,7 @@ class L3PacketSocket(SuperSocket):
             lvl = 3
         else:
             cls = conf.default_l2
-            warning("Unable to guess type (interface=%s protocol=%#x family=%i). Using %s" % (sa_ll[0],sa_ll[1],sa_ll[3],cls.name))
+            warning("Unable to guess type (interface=%s protocol=%#x family=%i). Using %s", sa_ll[0], sa_ll[1], sa_ll[3], cls.name)
             lvl = 2
 
         try:
@@ -398,16 +480,16 @@ class L3PacketSocket(SuperSocket):
             sdto = (iff, conf.l3types[type(x)])
         if sn[3] in conf.l2types:
             ll = lambda x:conf.l2types[sn[3]]()/x
-        sx = str(ll(x))
+        sx = raw(ll(x))
         x.sent_time = time.time()
         try:
             self.outs.sendto(sx, sdto)
-        except socket.error, msg:
+        except socket.error as msg:
             if msg[0] == 22 and len(sx) < conf.min_pkt_size:
-                self.outs.send(sx + "\x00" * (conf.min_pkt_size - len(sx)))
+                self.outs.send(sx + b"\x00" * (conf.min_pkt_size - len(sx)))
             elif conf.auto_fragment and msg[0] == 90:
                 for p in x.fragment():
-                    self.outs.sendto(str(ll(p)), sdto)
+                    self.outs.sendto(raw(ll(p)), sdto)
             else:
                 raise
 
@@ -442,7 +524,7 @@ class L2Socket(SuperSocket):
             self.LL = conf.l3types[sa_ll[1]]
         else:
             self.LL = conf.default_l2
-            warning("Unable to guess type (interface=%s protocol=%#x family=%i). Using %s" % (sa_ll[0],sa_ll[1],sa_ll[3],self.LL.name))
+            warning("Unable to guess type (interface=%s protocol=%#x family=%i). Using %s", sa_ll[0], sa_ll[1], sa_ll[3], self.LL.name)
     def close(self):
         if self.closed:
             return
@@ -467,13 +549,13 @@ class L2Socket(SuperSocket):
     def send(self, x):
         try:
             return SuperSocket.send(self, x)
-        except socket.error, msg:
+        except socket.error as msg:
             if msg[0] == 22 and len(x) < conf.min_pkt_size:
-                padding = "\x00" * (conf.min_pkt_size - len(x))
+                padding = b"\x00" * (conf.min_pkt_size - len(x))
                 if isinstance(x, Packet):
                     return SuperSocket.send(self, x / Padding(load=padding))
                 else:
-                    return SuperSocket.send(self, str(x) + padding)
+                    return SuperSocket.send(self, raw(x) + padding)
             raise
 
 
@@ -499,11 +581,10 @@ class L2ListenSocket(SuperSocket):
         self.promisc = promisc
         if iface is None:
             self.iff = get_if_list()
+        elif isinstance(iface, list):
+            self.iff = iface
         else:
-            if iface.__class__ is list:
-                self.iff = iface
-            else:
-                self.iff = [iface]
+            self.iff = [iface]
         if self.promisc:
             for i in self.iff:
                 set_promisc(self.ins, i)
@@ -524,8 +605,8 @@ class L2ListenSocket(SuperSocket):
         else:
             cls = conf.default_l2
             warning("Unable to guess type (interface=%s protocol=%#x "
-                    "family=%i). Using %s" % (sa_ll[0], sa_ll[1], sa_ll[3],
-                                              cls.name))
+                    "family=%i). Using %s", sa_ll[0], sa_ll[1], sa_ll[3],
+                                              cls.name)
 
         try:
             pkt = cls(pkt)
@@ -546,5 +627,3 @@ class L2ListenSocket(SuperSocket):
 conf.L3socket = L3PacketSocket
 conf.L2socket = L2Socket
 conf.L2listen = L2ListenSocket
-
-conf.iface = get_working_if()

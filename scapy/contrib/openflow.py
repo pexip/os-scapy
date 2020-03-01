@@ -8,17 +8,19 @@
 ## Based on OpenFlow v1.0.1
 ## Specifications can be retrieved from https://www.opennetworking.org/
 
-# scapy.contrib.description = openflow v1.0
+# scapy.contrib.description = Openflow v1.0
 # scapy.contrib.status = loads
 
+from __future__ import absolute_import
 import struct
 from scapy.fields import *
 from scapy.layers.l2 import *
 from scapy.layers.inet import *
+from scapy.compat import orb, raw
 
 ### If prereq_autocomplete is True then match prerequisites will be
 ### automatically handled. See OFPMatch class.
-prereq_autocomplete = False
+conf.contribs['OPENFLOW'] = {'prereq_autocomplete': True}
 
 #####################################################
 ################# Predefined values #################
@@ -93,7 +95,7 @@ class OFPPhyPort(Packet):
                     FlagsField("peer", 0, 32, ofp_port_features) ]
 
     def extract_padding(self, s):
-        return "", s
+        return b"", s
 
 class OFPMatch(Packet):
     name = "OFP_MATCH"
@@ -125,7 +127,7 @@ class OFPMatch(Packet):
                    ShortField("tp_dst", None) ]
 
     def extract_padding(self, s):
-        return "", s
+        return b"", s
 
     ### with post_build we create the wildcards field bit by bit
     def post_build(self, p, pay):
@@ -186,7 +188,7 @@ class OFPMatch(Packet):
         ### In order to write OFPMatch compliant with the specifications,
         ### if prereq_autocomplete has been set to True
         ### we assume ethertype=IP or nwproto=TCP when appropriate subfields are provided.
-        if prereq_autocomplete:
+        if conf.contribs['OPENFLOW']['prereq_autocomplete']:
             if self.dl_type is None:
                 if self.nw_src is not "0" or self.nw_dst is not "0" or self.nw_proto is not None or self.nw_tos is not None:
                     p = p[:22] + struct.pack("!H", 0x0800) + p[24:]
@@ -198,7 +200,7 @@ class OFPMatch(Packet):
                     p = p[:25] + struct.pack("!B", 0x06) + p[26:]
                     l = l[:-6] + "0" + l[-5:]
 
-        ins = "".join(chr(int("".join(x),2)) for x in zip(*[iter(l)]*8))
+        ins = b"".join(chb(int("".join(x),2)) for x in zip(*[iter(l)]*8))
         p = ins + p[4:]
         return p + pay
 
@@ -396,7 +398,7 @@ class QueuePropertyPacketListField(PacketListField):
     def getfield(self, pkt, s):
         lst = []
         l = 0
-        ret = ""
+        ret = b""
         remain = s
 
         while remain:
@@ -411,11 +413,11 @@ class QueuePropertyPacketListField(PacketListField):
 class OFPPacketQueue(Packet):
 
     def extract_padding(self, s):
-        return "", s
+        return b"", s
 
     def post_build(self, p, pay):
         if self.properties == []:
-            p += str(OFPQTNone())
+            p += raw(OFPQTNone())
         if self.len is None:
             l = len(p)+len(pay)
             p = p[:4] + struct.pack("!H", l) + p[6:]
@@ -437,7 +439,7 @@ class QueuePacketListField(PacketListField):
     def getfield(self, pkt, s):
         lst = []
         l = 0
-        ret = ""
+        ret = b""
         remain = s
 
         while remain:
@@ -658,7 +660,7 @@ class OFPTFeaturesRequest(_ofp_header):
                     IntField("xid", 0) ]
     overload_fields = {TCP: {"sport": 6653}}
 
-ofp_action_types_flags = ofp_action_types.values()[:-1]  # no ofpat_vendor flag
+ofp_action_types_flags = list(ofp_action_types.values())[:-1]  # no ofpat_vendor flag
 
 class OFPTFeaturesReply(_ofp_header):
     name = "OFPT_FEATURES_REPLY"
@@ -967,7 +969,7 @@ class OFPTStatsRequestTable(_ofp_header):
 class OFPTableStats(Packet):
 
     def extract_padding(self, s):
-        return "", s
+        return b"", s
 
     name = "OFP_TABLE_STATS"
     fields_desc = [ ByteField("table_id", 0),
@@ -1017,7 +1019,7 @@ class OFPTStatsRequestPort(_ofp_header):
 class OFPPortStats(Packet):
 
     def extract_padding(self, s):
-        return "", s
+        return b"", s
 
     name = "OFP_PORT_STATS"
     fields_desc = [ ShortEnumField("port_no", 0, ofp_port_no),
@@ -1183,21 +1185,21 @@ ofpt_cls = {  0: OFPTHello,
 TCP_guess_payload_class_copy = TCP.guess_payload_class
 
 def OpenFlow(self, payload):
-    if self is None or self.dport == 6653 or self.dport == 6633 or self.sport == 6653 or self.sport == 6653:
+    if self is None or self.dport == 6653 or self.dport == 6633 or self.sport == 6653 or self.sport == 6633:
     # port 6653 has been allocated by IANA, port 6633 should no longer be used
     # OpenFlow function may be called with None self in OFPPacketField
-        of_type = ord(payload[1])
+        of_type = orb(payload[1])
         if of_type == 1:
-            err_type = ord(payload[9])
+            err_type = orb(payload[9])
             # err_type is a short int, but last byte is enough
             if err_type == 255: err_type = 65535
             return ofp_error_cls[err_type]
         elif of_type == 16:
-            mp_type = ord(payload[9])
+            mp_type = orb(payload[9])
             if mp_type == 255: mp_type = 65535
             return ofp_stats_request_cls[mp_type]
         elif of_type == 17:
-            mp_type = ord(payload[9])
+            mp_type = orb(payload[9])
             if mp_type == 255: mp_type = 65535
             return ofp_stats_reply_cls[mp_type]
         else:

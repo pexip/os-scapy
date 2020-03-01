@@ -7,13 +7,17 @@
 ISAKMP (Internet Security Association and Key Management Protocol).
 """
 
+from __future__ import absolute_import
 import struct
 from scapy.config import conf
 from scapy.packet import *
+from scapy.compat import *
 from scapy.fields import *
 from scapy.ansmachine import *
 from scapy.layers.inet import IP,UDP
 from scapy.sendrecv import sr
+from scapy.error import warning
+from functools import reduce
 
 
 # see http://www.iana.org/assignments/ipsec-registry for details
@@ -100,16 +104,17 @@ del(val)
 
 class ISAKMPTransformSetField(StrLenField):
     islist=1
-    def type2num(self, (typ,val)):
+    def type2num(self, type_val_tuple):
+        typ, val = type_val_tuple
         type_val,enc_dict,tlv = ISAKMPTransformTypes.get(typ, (typ,{},0))
         val = enc_dict.get(val, val)
-        s = ""
+        s = b""
         if (val & ~0xffff):
             if not tlv:
                 warning("%r should not be TLV but is too big => using TLV encoding" % typ)
             n = 0
             while val:
-                s = chr(val&0xff)+s
+                s = chb(val&0xff)+s
                 val >>= 8
                 n += 1
             val = n
@@ -122,9 +127,9 @@ class ISAKMPTransformSetField(StrLenField):
         return (val[0],enc)
     def i2m(self, pkt, i):
         if i is None:
-            return ""
-        i = map(self.type2num, i)
-        return "".join(i)
+            return b""
+        i = [self.type2num(e) for e in i]
+        return b"".join(i)
     def m2i(self, pkt, m):
         # I try to ensure that we don't read off the end of our packet based
         # on bad length fields we're provided in the packet. There are still
@@ -143,7 +148,7 @@ class ISAKMPTransformSetField(StrLenField):
                 if value_len+4 > len(m):
                     warning("Bad length for ISAKMP tranform type=%#6x" % trans_type)
                 value = m[4:4+value_len]
-                value = reduce(lambda x,y: (x<<8L)|y, struct.unpack("!%s" % ("B"*len(value),), value),0)
+                value = reduce(lambda x,y: (x<<8)|y, struct.unpack("!%s" % ("B"*len(value),), value),0)
             else:
                 trans_type &= 0x7fff
                 value_len=0
@@ -228,7 +233,7 @@ class ISAKMP_payload_Transform(ISAKMP_class):
     def post_build(self, p, pay):
         if self.length is None:
             l = len(p)
-            p = p[:2]+chr((l>>8)&0xff)+chr(l&0xff)+p[4:]
+            p = p[:2]+chb((l>>8)&0xff)+chb(l&0xff)+p[4:]
         p += pay
         return p
             

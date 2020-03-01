@@ -8,11 +8,14 @@
 Management Information Base (MIB) parsing
 """
 
+from __future__ import absolute_import
 import re
 from glob import glob
 from scapy.dadict import DADict,fixname
 from scapy.config import conf
 from scapy.utils import do_graph
+import scapy.modules.six as six
+from scapy.compat import *
 
 #################
 ## MIB parsing ##
@@ -32,7 +35,7 @@ class MIBDict(DADict):
             x += "."
         max=0
         root="."
-        for k in self.iterkeys():
+        for k in six.iterkeys(self):
             if x.startswith(self[k]+"."):
                 if max < len(self[k]):
                     max = len(self[k])
@@ -53,8 +56,8 @@ class MIBDict(DADict):
     def _make_graph(self, other_keys=None, **kargs):
         if other_keys is None:
             other_keys = []
-        nodes = [(k, self[k]) for k in self.iterkeys()]
-        oids = [self[k] for k in self.iterkeys()]
+        nodes = [(k, self[k]) for k in six.iterkeys(self)]
+        oids = [self[k] for k in six.iterkeys(self)]
         for k in other_keys:
             if k not in oids:
                 nodes.append(self.oidname(k),k)
@@ -70,8 +73,6 @@ class MIBDict(DADict):
             s += '\t"%s" -> "%s" [label="%s"];\n' % (parent, o,remainder)
         s += "}\n"
         do_graph(s, **kargs)
-    def __len__(self):
-        return len(self.keys())
 
 
 def mib_register(ident, value, the_mib, unresolved):
@@ -83,14 +84,14 @@ def mib_register(ident, value, the_mib, unresolved):
         if _mib_re_integer.match(v):
             resval.append(v)
         else:
-            v = fixname(v)
+            v = fixname(plain_str(v))
             if v not in the_mib:
                 not_resolved = 1
             if v in the_mib:
                 v = the_mib[v]
             elif v in unresolved:
                 v = unresolved[v]
-            if type(v) is list:
+            if isinstance(v, list):
                 resval += v
             else:
                 resval.append(v)
@@ -99,7 +100,7 @@ def mib_register(ident, value, the_mib, unresolved):
         return False
     else:
         the_mib[ident] = resval
-        keys = unresolved.keys()
+        keys = list(unresolved)
         i = 0
         while i < len(keys):
             k = keys[i]
@@ -116,10 +117,10 @@ def mib_register(ident, value, the_mib, unresolved):
 def load_mib(filenames):
     the_mib = {'iso': ['1']}
     unresolved = {}
-    for k in conf.mib.iterkeys():
+    for k in six.iterkeys(conf.mib):
         mib_register(k, conf.mib[k].split("."), the_mib, unresolved)
 
-    if type(filenames) is str:
+    if isinstance(filenames, (str, bytes)):
         filenames = [filenames]
     for fnames in filenames:
         for fname in glob(fnames):
@@ -138,9 +139,9 @@ def load_mib(filenames):
                 mib_register(ident, oid, the_mib, unresolved)
 
     newmib = MIBDict(_name="MIB")
-    for k,o in the_mib.iteritems():
+    for k,o in six.iteritems(the_mib):
         newmib[k]=".".join(o)
-    for k,o in unresolved.iteritems():
+    for k,o in six.iteritems(unresolved):
         newmib[k]=".".join(o)
 
     conf.mib=newmib
@@ -167,6 +168,12 @@ pkcs1_oids = {
         "sha384WithRSAEncryption"           : "1.2.840.113549.1.1.12",
         "sha512WithRSAEncryption"           : "1.2.840.113549.1.1.13",
         "sha224WithRSAEncryption"           : "1.2.840.113549.1.1.14"
+        }
+
+####### secsig oiw #######
+
+secsig_oids = {
+        "sha1"                              : "1.3.14.3.2.26"
         }
 
 ####### pkcs9 #######
@@ -428,7 +435,8 @@ certPkixAd_oids = {
         "id-ad-caRepository"            : "1.3.6.1.5.5.7.48.5",
         "id-pkix-ocsp-archive-cutoff"   : "1.3.6.1.5.5.7.48.6",
         "id-pkix-ocsp-service-locator"  : "1.3.6.1.5.5.7.48.7",
-        "id-ad-cmc"                     : "1.3.6.1.5.5.7.48.12"
+        "id-ad-cmc"                     : "1.3.6.1.5.5.7.48.12",
+        "basic-response"                : "1.3.6.1.5.5.7.48.1.1"
         }
 
 ####### ansi-x962 #######
@@ -556,6 +564,7 @@ evPolicy_oids = {
 
 x509_oids_sets = [
                  pkcs1_oids,
+                 secsig_oids,
                  pkcs9_oids,
                  attributeType_oids,
                  certificateExtension_oids,

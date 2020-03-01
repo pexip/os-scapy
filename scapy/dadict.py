@@ -7,14 +7,18 @@
 Direct Access dictionary.
 """
 
+from __future__ import absolute_import
+from __future__ import print_function
 from scapy.error import Scapy_Exception
+import scapy.modules.six as six
+from scapy.compat import *
 
 ###############################
-## Direct Access dictionnary ##
+## Direct Access dictionary  ##
 ###############################
 
 def fixname(x):
-    if x and x[0] in "0123456789":
+    if x and str(x[0]) in "0123456789":
         x = "n_"+x
     return x.translate("________________________________________________0123456789_______ABCDEFGHIJKLMNOPQRSTUVWXYZ______abcdefghijklmnopqrstuvwxyz_____________________________________________________________________________________________________________________________________")
 
@@ -25,9 +29,9 @@ class DADict_Exception(Scapy_Exception):
 class DADict:
     def __init__(self, _name="DADict", **kargs):
         self._name=_name
-        self.__dict__.update(kargs)
+        self.update(kargs)
     def fixname(self,val):
-        return fixname(val)
+        return fixname(plain_str(val))
     def __contains__(self, val):
         return val in self.__dict__
     def __getitem__(self, attr):
@@ -35,13 +39,14 @@ class DADict:
     def __setitem__(self, attr, val):        
         return setattr(self, self.fixname(attr), val)
     def __iter__(self):
-        return iter(map(lambda (x,y):y,filter(lambda (x,y):x and x[0]!="_", self.__dict__.items())))
+        return (value for key, value in six.iteritems(self.__dict__)
+                if key and key[0] != '_')
     def _show(self):
-        for k in self.__dict__.keys():
+        for k in self.__dict__:
             if k and k[0] != "_":
-                print "%10s = %r" % (k,getattr(self,k))
+                print("%10s = %r" % (k,getattr(self,k)))
     def __repr__(self):
-        return "<%s/ %s>" % (self._name," ".join(filter(lambda x:x and x[0]!="_",self.__dict__.keys())))
+        return "<%s/ %s>" % (self._name," ".join(x for x in self.__dict__ if x and x[0]!="_"))
 
     def _branch(self, br, uniq=0):
         if uniq and br._name in self:
@@ -51,10 +56,11 @@ class DADict:
     def _my_find(self, *args, **kargs):
         if args and self._name not in args:
             return False
-        for k in kargs:
-            if k not in self or self[k] != kargs[k]:
-                return False
-        return True
+        return all(k in self and self[k] == v for k, v in six.iteritems(kargs))
+
+    def update(self, *args, **kwargs):
+        for k, v in six.iteritems(dict(*args, **kwargs)):
+            self[k] = v
     
     def _find(self, *args, **kargs):
          return self._recurs_find((), *args, **kargs)
@@ -86,3 +92,5 @@ class DADict:
         return list(self.iterkeys())
     def iterkeys(self):
         return (x for x in self.__dict__ if x and x[0] != "_")
+    def __len__(self):
+        return len(self.__dict__)

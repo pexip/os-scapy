@@ -1,33 +1,17 @@
 --- a/scapy/config.py
 +++ b/scapy/config.py
-@@ -57,11 +57,11 @@
- 
-     
- class ProgPath(ConfClass):
--    pdfreader = "acroread"
-+    pdfreader = "xpdf"
-     psreader = "gv"
+@@ -65,7 +65,7 @@
+     psreader = "open" if DARWIN else "xdg-open"
      dot = "dot"
      display = "display"
 -    tcpdump = "tcpdump"
 +    tcpdump = "/usr/sbin/tcpdump"
      tcpreplay = "tcpreplay"
      hexedit = "hexer"
-     wireshark = "wireshark"
---- a/scapy/data.py
-+++ b/scapy/data.py
-@@ -182,7 +182,7 @@
-     IP_PROTOS=load_protocols("/etc/protocols")
-     ETHER_TYPES=load_ethertypes("/etc/ethertypes")
-     TCP_SERVICES,UDP_SERVICES=load_services("/etc/services")
--    MANUFDB = load_manuf("/usr/share/wireshark/wireshark/manuf")
-+    MANUFDB = load_manuf("/usr/share/wireshark/manuf")
- 
- 
- 
+     tshark = "tshark"
 --- a/scapy/utils6.py
 +++ b/scapy/utils6.py
-@@ -274,7 +274,7 @@
+@@ -246,7 +246,7 @@
      Extract the MAC address from a modified EUI-64 constructed IPv6
      address provided and use the IANA oui.txt file to get the vendor.
      The database used for the conversion is the one loaded by Scapy,

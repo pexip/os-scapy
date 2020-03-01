@@ -5,20 +5,25 @@
 ## Copyright (C) Philippe Biondi <phil@secdev.org>
 ## This program is published under a GPLv2 license
 
-from __future__ import with_statement
-
-import os,thread,select
+from __future__ import print_function
+import os
 import subprocess
 import itertools
 import collections
 import time
-import Queue
+import scapy.modules.six as six
+from threading import Lock, Thread
 import scapy.utils
 
-from scapy.error import log_interactive,warning
+from scapy.automaton import Message, select_objects, SelectableObject
+from scapy.consts import WINDOWS
+from scapy.error import log_interactive, warning
 from scapy.config import conf
+from scapy.utils import get_temp_file, do_graph
 
-class PipeEngine:
+import scapy.arch
+
+class PipeEngine(SelectableObject):
     pipes = {}
     @classmethod
     def list_pipes(cls):
@@ -26,14 +31,14 @@ class PipeEngine:
             doc = pc.__doc__ or ""
             if doc:
                 doc = doc.splitlines()[0]
-            print "%20s: %s" % (pn, doc)
+            print("%20s: %s" % (pn, doc))
     @classmethod
     def list_pipes_detailed(cls):
         for pn,pc in sorted(cls.pipes.items()):
             if pc.__doc__:
-                print "###### %s\n %s" % (pn ,pc.__doc__)
+                print("###### %s\n %s" % (pn ,pc.__doc__))
             else:
-                print "###### %s" % pn
+                print("###### %s" % pn)
     
     def __init__(self, *pipes):
         self.active_pipes = set()
@@ -41,10 +46,11 @@ class PipeEngine:
         self.active_drains = set()
         self.active_sinks = set()
         self._add_pipes(*pipes)
-        self.thread_lock = thread.allocate_lock()
-        self.command_lock = thread.allocate_lock()
+        self.thread_lock = Lock()
+        self.command_lock = Lock()
+        self.__fd_queue = collections.deque()
         self.__fdr,self.__fdw = os.pipe()
-        self.threadid = None
+        self.thread = None
     def __getattr__(self, attr):
         if attr.startswith("spawn_"):
             dname = attr[6:]
@@ -56,6 +62,23 @@ class PipeEngine:
                     return p
                 return f
         raise AttributeError(attr)
+
+    def check_recv(self):
+        """As select.select is not available, we check if there
+        is some data to read by using a list that stores pointers."""
+        return len(self.__fd_queue) > 0
+
+    def fileno(self):
+        return self.__fdr
+
+    def _read_cmd(self):
+        os.read(self.__fdr,1)
+        return self.__fd_queue.popleft()
+
+    def _write_cmd(self, _cmd):
+        self.__fd_queue.append(_cmd)
+        os.write(self.__fdw, b"X")
+        self.call_release()
 
     def add_one_pipe(self, pipe):
         self.active_pipes.add(pipe)
@@ -92,15 +115,15 @@ class PipeEngine:
             for p in self.active_pipes:
                 p.start()
             sources = self.active_sources
-            sources.add(self.__fdr)
+            sources.add(self)
             exhausted = set([])
             RUN=True
             STOP_IF_EXHAUSTED = False
             while RUN and (not STOP_IF_EXHAUSTED or len(sources) > 1):
-                fds,fdo,fde=select.select(sources,[],[])
+                fds = select_objects(sources, 2)
                 for fd in fds:
-                    if fd is self.__fdr:
-                        cmd = os.read(self.__fdr,1)
+                    if fd is self:
+                        cmd = self._read_cmd()
                         if cmd == "X":
                             RUN=False
                             break
@@ -108,13 +131,13 @@ class PipeEngine:
                             STOP_IF_EXHAUSTED = True
                         elif cmd == "A":
                             sources = self.active_sources-exhausted
-                            sources.add(self.__fdr)
+                            sources.add(self)
                         else:
                             warning("Unknown internal pipe engine command: %r. Ignoring." % cmd)
                     elif fd in sources:
                         try:
                             fd.deliver()
-                        except Exception,e:
+                        except Exception as e:
                             log_interactive.exception("piping from %s failed: %s" % (fd.name, e))
                         else:
                             if fd.exhausted():
@@ -132,7 +155,10 @@ class PipeEngine:
 
     def start(self):
         if self.thread_lock.acquire(0):
-            self.threadid = thread.start_new_thread(self.run,())
+            _t = Thread(target=self.run)
+            _t.setDaemon(True)
+            _t.start()
+            self.thread = _t
         else:
             warning("Pipe engine already running")
     def wait_and_stop(self):
@@ -140,23 +166,25 @@ class PipeEngine:
     def stop(self, _cmd="X"):
         try:
             with self.command_lock:
-                if self.threadid is not None:
-                    os.write(self.__fdw, _cmd)
-                    while not self.thread_lock.acquire(0):
-                        time.sleep(0.01) # interruptible wait for thread to terminate
-                    self.thread_lock.release() # (not using .join() because it needs 'threading' module)
+                if self.thread is not None:
+                    self._write_cmd(_cmd)
+                    self.thread.join()
+                    try:
+                        self.thread_lock.release()
+                    except:
+                        pass
                 else:
                     warning("Pipe engine thread not running")
         except KeyboardInterrupt:
-            print "Interrupted by user."
+            print("Interrupted by user.")
 
     def add(self, *pipes):
         pipes = self._add_pipes(*pipes)
         with self.command_lock:
-            if self.threadid is not None:
+            if self.thread is not None:
                 for p in pipes:
                     p.start()
-                os.write(self.__fdw, "A")
+                self._write_cmd("A")
     
     def graph(self,**kargs):
         g=['digraph "pipe" {',"\tnode [shape=rectangle];",]
@@ -168,13 +196,18 @@ class PipeEngine:
             for q in p.sinks:
                 g.append('\t"%i" -> "%i";' % (id(p), id(q)))
         g.append("")
-        g.append("\tedge [color=red, arrowhead=veevee];")
+        g.append("\tedge [color=purple, arrowhead=veevee];")
         for p in self.active_pipes:
             for q in p.high_sinks:
-                g.append('\t"%i" -> "%i" [color="red"];' % (id(p), id(q)))
+                g.append('\t"%i" -> "%i";' % (id(p), id(q)))
+        g.append("")
+        g.append("\tedge [color=red, arrowhead=diamond];")
+        for p in self.active_pipes:
+            for q in p.trigger_sinks:
+                g.append('\t"%i" -> "%i";' % (id(p), id(q)))
         g.append('}')
         graph = "\n".join(g)
-        scapy.utils.do_graph(graph, **kargs) 
+        do_graph(graph, **kargs) 
 
 
 class _ConnectorLogic(object):
@@ -183,6 +216,8 @@ class _ConnectorLogic(object):
         self.sinks = set()
         self.high_sources = set()
         self.high_sinks = set()
+        self.trigger_sources = set()
+        self.trigger_sinks = set()
 
     def __lt__(self, other):
         other.sinks.add(self)
@@ -210,13 +245,21 @@ class _ConnectorLogic(object):
         other >> self
         return other
 
+    def __xor__(self, other):
+        self.trigger_sinks.add(other)
+        other.trigger_sources.add(self)
+        return other
 
-class Pipe(_ConnectorLogic):
-    class __metaclass__(type):
-        def __new__(cls, name, bases, dct):
-            c = type.__new__(cls, name, bases, dct)
-            PipeEngine.pipes[name] = c
-            return c
+    def __hash__(self):
+        return object.__hash__(self)
+
+class _PipeMeta(type):
+    def __new__(cls, name, bases, dct):
+        c = type.__new__(cls, name, bases, dct)
+        PipeEngine.pipes[name] = c
+        return c
+
+class Pipe(six.with_metaclass(_PipeMeta, _ConnectorLogic)):
     def __init__(self, name=None):
         _ConnectorLogic.__init__(self)
         if name is None:
@@ -228,6 +271,9 @@ class Pipe(_ConnectorLogic):
     def _high_send(self, msg):
         for s in self.high_sinks:
             s.high_push(msg)
+    def _trigger(self, msg=None):
+        for s in self.trigger_sinks:
+            s.on_trigger(msg)
 
     def __repr__(self):
         ct = conf.color_theme
@@ -254,22 +300,34 @@ class Pipe(_ConnectorLogic):
                              ct.punct(",").join(ct.field_name(s.name) for s in self.high_sinks))
             s += ct.punct("]")
 
+        if self.trigger_sources or self.trigger_sinks:
+            s+= " %s" % ct.punct("[")
+            if self.trigger_sources:
+                s+="%s%s" %  (ct.punct(",").join(ct.field_name(s.name) for s in self.trigger_sources),
+                              ct.field_value("^"))
+            s += ct.layer_name("#")
+            if self.trigger_sinks:
+                s+="%s%s" % (ct.field_value("^"),
+                             ct.punct(",").join(ct.field_name(s.name) for s in self.trigger_sinks))
+            s += ct.punct("]")
+
 
         s += ct.punct(">")
         return s
 
-class Source(Pipe):
+class Source(Pipe, SelectableObject):
     def __init__(self, name=None):
         Pipe.__init__(self, name=name)
         self.is_exhausted = False
     def _read_message(self):
-        from scapy.automaton import Message
         return Message()
     def deliver(self):
         msg = self._read_message
         self._send(msg)
     def fileno(self):
         return None
+    def check_recv(self):
+        return False
     def exhausted(self):
         return self.is_exhausted
     def start(self):
@@ -305,13 +363,15 @@ class Sink(Pipe):
         pass
 
 
-class AutoSource(Source):
+class AutoSource(Source, SelectableObject):
     def __init__(self, name=None):
         Source.__init__(self, name=name)
         self.__fdr,self.__fdw = os.pipe()
         self._queue = collections.deque()
     def fileno(self):
         return self.__fdr
+    def check_recv(self):
+        return len(self._queue) > 0
     def _gen_data(self, msg):
         self._queue.append((msg,False))
         self._wake_up()
@@ -319,7 +379,8 @@ class AutoSource(Source):
         self._queue.append((msg,True))
         self._wake_up()
     def _wake_up(self):
-        os.write(self.__fdw,"x")
+        os.write(self.__fdw, b"X")
+        self.call_release()
     def deliver(self):
         os.read(self.__fdr,1)
         try:
@@ -340,7 +401,7 @@ class ThreadGenSource(AutoSource):
         pass
     def start(self):
         self.RUN = True
-        thread.start_new_thread(self.generate,())
+        Thread(target=self.generate).start()
     def stop(self):
         self.RUN = False
 
@@ -355,9 +416,9 @@ class ConsoleSink(Sink):
      +-------+
 """
     def push(self, msg):
-        print ">%r" % msg
+        print(">%r" % msg)
     def high_push(self, msg):
-        print ">>%r" % msg
+        print(">>%r" % msg)
 
 class RawConsoleSink(Sink):
     """Print messages on low and high entries
@@ -370,14 +431,15 @@ class RawConsoleSink(Sink):
     def __init__(self, name=None, newlines=True):
         Sink.__init__(self, name=name)
         self.newlines = newlines
+        self._write_pipe = 1
     def push(self, msg):
         if self.newlines:
             msg += "\n"
-        os.write(1, str(msg))
+        os.write(self._write_pipe, msg.encode("utf8"))
     def high_push(self, msg):
         if self.newlines:
             msg += "\n"
-        os.write(1, str(msg))
+        os.write(self._write_pipe, msg.encode("utf8"))
 
 class CLIFeeder(AutoSource):
     """Send messages from python command line
@@ -414,7 +476,7 @@ class PeriodicSource(ThreadGenSource):
 """
     def __init__(self, msg, period, period2=0, name=None):
         ThreadGenSource.__init__(self,name=name)
-        if not hasattr(msg, "__iter__"):
+        if not isinstance(msg, (list, set, tuple)):
             msg=[msg]
         self.msg = msg
         self.period = period
@@ -447,30 +509,65 @@ class TermSink(Sink):
         self.opened = False
         if self.openearly:
             self.start()
-
-    def start(self):
+    def _start_windows(self):
         if not self.opened:
             self.opened = True
-            self.__r,self.__w = os.pipe()
+            self.__f = get_temp_file()
+            open(self.__f, "a").close()
+            self.name = "Scapy" if self.name is None else self.name
+            # Start a powershell in a new window and print the PID
+            cmd = "$app = Start-Process PowerShell -ArgumentList '-command &{$host.ui.RawUI.WindowTitle=\\\"%s\\\";Get-Content \\\"%s\\\" -wait}' -passthru; echo $app.Id" % (self.name, self.__f.replace("\\", "\\\\"))
+            proc = subprocess.Popen([conf.prog.powershell, cmd], stdout=subprocess.PIPE)
+            output, _ = proc.communicate()
+            # This is the process PID
+            self.pid = int(output)
+            print("PID: %d" % self.pid)
+    def _start_unix(self):
+        if not self.opened:
+            self.opened = True
+            rdesc, self.wdesc = os.pipe()
             cmd = ["xterm"]
             if self.name is not None:
                 cmd.extend(["-title",self.name])
             if self.keepterm:
                 cmd.append("-hold")
-            cmd.extend(["-e", "cat 0<&%i" % self.__r])
-            self.__p = subprocess.Popen(cmd)
-            os.close(self.__r)
-    def stop(self):
+            cmd.extend(["-e", "cat <&%d" % rdesc])
+            self.proc = subprocess.Popen(cmd, close_fds=False)
+            os.close(rdesc)
+    def start(self):
+        if WINDOWS:
+            return self._start_windows()
+        else:
+            return self._start_unix()
+    def _stop_windows(self):
         if not self.keepterm:
             self.opened = False
-            os.close(self.__w)
-            self.__p.kill()
-            self.__p.wait()
+            # Recipe to kill process with PID
+            # http://code.activestate.com/recipes/347462-terminating-a-subprocess-on-windows/
+            import ctypes
+            PROCESS_TERMINATE = 1
+            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_TERMINATE, False, self.pid)
+            ctypes.windll.kernel32.TerminateProcess(handle, -1)
+            ctypes.windll.kernel32.CloseHandle(handle)
+    def _stop_unix(self):
+        if not self.keepterm:
+            self.opened = False
+            self.proc.kill()
+            self.proc.wait()
+    def stop(self):
+        if WINDOWS:
+            return self._stop_windows()
+        else:
+            return self._stop_unix()
     def _print(self, s):
         if self.newlines:
             s+="\n"
-        os.write(self.__w, s)
-            
+        if WINDOWS:
+            wdesc = open(self.__f, "a")
+            wdesc.write(s)
+            wdesc.close()
+        else:
+            os.write(self.wdesc, s.encode())
     def push(self, msg):
         self._print(str(msg))
     def high_push(self, msg):
@@ -487,7 +584,7 @@ class QueueSink(Sink):
 """
     def __init__(self, name=None):
         Sink.__init__(self, name=name)
-        self.q = Queue.Queue()
+        self.q = six.moves.queue.Queue()
     def push(self, msg):
         self.q.put(msg)
     def high_push(self, msg):
@@ -496,7 +593,7 @@ class QueueSink(Sink):
         while True:
             try:
                 return self.q.get(True, timeout=0.1)
-            except Queue.Empty:
+            except six.moves.queue.Empty:
                 pass
 
 
@@ -541,27 +638,3 @@ class DownDrain(Drain):
         pass
     def high_push(self, msg):
         self._send(msg)
-        
-
-def _testmain():
-    s = PeriodicSource("hello", 1, name="src")
-    d1 = Drain(name="d1")
-    c = ConsoleSink(name="c")
-    tf = TransformDrain(lambda x:"Got %r" % x)
-    t = TermSink(name="t", keepterm=False)
-
-    s > d1 > c
-    d1 > tf > t
-
-    p = PipeEngine(s)
-
-    p.graph(type="png",target="> /tmp/pipe.png")
-
-    p.start()
-    print p.threadid
-    time.sleep(5)
-    p.stop()
-
-
-if __name__ == "__main__":
-    _testmain()
