@@ -1,3 +1,11 @@
+scapy (2.4.0-2pexip1) pexip; urgency=medium
+
+  * Migrate to Buster
+  * Remove patch applied upstream:
+    debian/patches/ipv6.patch
+
+ -- Vincent Sanders <vince@pexip.com>  Sun, 01 Mar 2020 19:43:04 +0000
+
 scapy (2.4.0-2) unstable; urgency=medium
 
   * Use pybuild for Python 2 and 3 packages (Closes: #889938, #889939)
