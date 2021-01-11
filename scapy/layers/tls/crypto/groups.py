@@ -1,7 +1,7 @@
-## This file is part of Scapy
-## Copyright (C) 2007, 2008, 2009 Arnaud Ebalard
-##               2015, 2016, 2017 Maxence Tury
-## This program is published under a GPLv2 license
+# This file is part of Scapy
+# Copyright (C) 2007, 2008, 2009 Arnaud Ebalard
+#               2015, 2016, 2017 Maxence Tury
+# This program is published under a GPLv2 license
 
 """
 This is a register for DH groups from RFC 3526 and RFC 4306.
@@ -15,28 +15,29 @@ We also provide TLS identifiers for these DH groups and also the ECDH groups.
 from __future__ import absolute_import
 
 from scapy.config import conf
+from scapy.error import warning
 from scapy.utils import long_converter
+import scapy.modules.six as six
 if conf.crypto_valid:
     from cryptography.hazmat.backends import default_backend
-    from cryptography.hazmat.primitives.asymmetric import dh
-import scapy.modules.six as six
-
-from scapy.config import conf
-from scapy.utils import long_converter
+    from cryptography.hazmat.primitives.asymmetric import dh, ec
+    from cryptography.hazmat.primitives import serialization
+if conf.crypto_valid_advanced:
+    from cryptography.hazmat.primitives.asymmetric import x25519
+    from cryptography.hazmat.primitives.asymmetric import x448
 
 # We have to start by a dirty hack in order to allow long generators,
 # which some versions of openssl love to use...
 
 if conf.crypto_valid:
-    from cryptography.hazmat.backends import default_backend
     from cryptography.hazmat.primitives.asymmetric.dh import DHParameterNumbers
 
     try:
-        # We test with dummy values whether the size limitation has been removed.
+        # We test with dummy values whether the size limitation has been removed.  # noqa: E501
         pn_test = DHParameterNumbers(2, 7)
     except ValueError:
         # We get rid of the limitation through the cryptography v1.9 __init__.
-        import six
+
         def DHParameterNumbers__init__hack(self, p, g, q=None):
             if (
                 not isinstance(p, six.integer_types) or
@@ -56,6 +57,7 @@ if conf.crypto_valid:
 
 
 _ffdh_groups = {}
+
 
 class _FFDHParamsMetaclass(type):
     def __new__(cls, ffdh_name, bases, dct):
@@ -81,7 +83,8 @@ class modp768(_FFDHParams):
     A63A3620 FFFFFFFF FFFFFFFF""")
     mLen = 768
 
-class modp1024(_FFDHParams): # From RFC 4306
+
+class modp1024(_FFDHParams):  # From RFC 4306
     g = 0x02
     m = long_converter("""
     FFFFFFFF FFFFFFFF C90FDAA2 2168C234 C4C6628B 80DC1CD1 29024E08
@@ -89,9 +92,10 @@ class modp1024(_FFDHParams): # From RFC 4306
     302B0A6D F25F1437 4FE1356D 6D51C245 E485B576 625E7EC6 F44C42E9
     A637ED6B 0BFF5CB6 F406B7ED EE386BFB 5A899FA5 AE9F2411 7C4B1FE6
     49286651 ECE65381 FFFFFFFF FFFFFFFF""")
-    mLen  = 1024
+    mLen = 1024
 
-class modp1536(_FFDHParams): # From RFC 3526
+
+class modp1536(_FFDHParams):  # From RFC 3526
     g = 0x02
     m = long_converter("""
     FFFFFFFF FFFFFFFF C90FDAA2 2168C234 C4C6628B 80DC1CD1
@@ -102,9 +106,10 @@ class modp1536(_FFDHParams): # From RFC 3526
     C2007CB8 A163BF05 98DA4836 1C55D39A 69163FA8 FD24CF5F
     83655D23 DCA3AD96 1C62F356 208552BB 9ED52907 7096966D
     670C354E 4ABC9804 F1746C08 CA237327 FFFFFFFF FFFFFFFF""")
-    mLen  = 1536
+    mLen = 1536
 
-class modp2048(_FFDHParams): # From RFC 3526
+
+class modp2048(_FFDHParams):  # From RFC 3526
     g = 0x02
     m = long_converter("""
     FFFFFFFF FFFFFFFF C90FDAA2 2168C234 C4C6628B 80DC1CD1
@@ -118,9 +123,10 @@ class modp2048(_FFDHParams): # From RFC 3526
     E39E772C 180E8603 9B2783A2 EC07A28F B5C55DF0 6F4C52C9
     DE2BCBF6 95581718 3995497C EA956AE5 15D22618 98FA0510
     15728E5A 8AACAA68 FFFFFFFF FFFFFFFF""")
-    mLen  = 2048
+    mLen = 2048
 
-class modp3072(_FFDHParams): # From RFC 3526
+
+class modp3072(_FFDHParams):  # From RFC 3526
     g = 0x02
     m = long_converter("""
     FFFFFFFF FFFFFFFF C90FDAA2 2168C234 C4C6628B 80DC1CD1
@@ -139,9 +145,10 @@ class modp3072(_FFDHParams): # From RFC 3526
     F12FFA06 D98A0864 D8760273 3EC86A64 521F2B18 177B200C
     BBE11757 7A615D6C 770988C0 BAD946E2 08E24FA0 74E5AB31
     43DB5BFC E0FD108E 4B82D120 A93AD2CA FFFFFFFF FFFFFFFF""")
-    mLen  = 3072
+    mLen = 3072
 
-class modp4096(_FFDHParams): # From RFC 3526
+
+class modp4096(_FFDHParams):  # From RFC 3526
     g = 0x02
     m = long_converter("""
     FFFFFFFF FFFFFFFF C90FDAA2 2168C234 C4C6628B 80DC1CD1
@@ -166,9 +173,10 @@ class modp4096(_FFDHParams): # From RFC 3526
     1F612970 CEE2D7AF B81BDD76 2170481C D0069127 D5B05AA9
     93B4EA98 8D8FDDC1 86FFB7DC 90A6C08F 4DF435C9 34063199
     FFFFFFFF FFFFFFFF""")
-    mLen  = 4096
+    mLen = 4096
 
-class modp6144(_FFDHParams): # From RFC 3526
+
+class modp6144(_FFDHParams):  # From RFC 3526
     g = 0x02
     m = long_converter("""
     FFFFFFFF FFFFFFFF C90FDAA2 2168C234 C4C6628B 80DC1CD1 29024E08
@@ -201,7 +209,8 @@ class modp6144(_FFDHParams): # From RFC 3526
     6DCC4024 FFFFFFFF FFFFFFFF""")
     mLen = 6144
 
-class modp8192(_FFDHParams): # From RFC 3526
+
+class modp8192(_FFDHParams):  # From RFC 3526
     g = 0x02
     m = long_converter("""
     FFFFFFFF FFFFFFFF C90FDAA2 2168C234 C4C6628B 80DC1CD1
@@ -249,7 +258,8 @@ class modp8192(_FFDHParams): # From RFC 3526
     60C980DD 98EDD3DF FFFFFFFF FFFFFFFF""")
     mLen = 8192
 
-class ffdhe2048(_FFDHParams): # From RFC 7919
+
+class ffdhe2048(_FFDHParams):  # From RFC 7919
     g = 0x02
     m = long_converter("""
     FFFFFFFF FFFFFFFF ADF85458 A2BB4A9A AFDC5620 273D3CF1
@@ -266,7 +276,8 @@ class ffdhe2048(_FFDHParams): # From RFC 7919
     """)
     mLen = 2048
 
-class ffdhe3072(_FFDHParams): # From RFC 7919
+
+class ffdhe3072(_FFDHParams):  # From RFC 7919
     g = 0x02
     m = long_converter("""
     FFFFFFFF FFFFFFFF ADF85458 A2BB4A9A AFDC5620 273D3CF1
@@ -288,7 +299,8 @@ class ffdhe3072(_FFDHParams): # From RFC 7919
     """)
     mLen = 3072
 
-class ffdhe4096(_FFDHParams): # From RFC 7919
+
+class ffdhe4096(_FFDHParams):  # From RFC 7919
     g = 0x02
     m = long_converter("""
     FFFFFFFF FFFFFFFF ADF85458 A2BB4A9A AFDC5620 273D3CF1
@@ -316,7 +328,8 @@ class ffdhe4096(_FFDHParams): # From RFC 7919
     """)
     mLen = 4096
 
-class ffdhe6144(_FFDHParams): # From RFC 7919
+
+class ffdhe6144(_FFDHParams):  # From RFC 7919
     g = 0x02
     m = long_converter("""
     FFFFFFFF FFFFFFFF ADF85458 A2BB4A9A AFDC5620 273D3CF1
@@ -354,7 +367,8 @@ class ffdhe6144(_FFDHParams): # From RFC 7919
     """)
     mLen = 6144
 
-class ffdhe8192(_FFDHParams): # From RFC 7919
+
+class ffdhe8192(_FFDHParams):  # From RFC 7919
     g = 0x02
     m = long_converter("""
     FFFFFFFF FFFFFFFF ADF85458 A2BB4A9A AFDC5620 273D3CF1
@@ -404,45 +418,118 @@ class ffdhe8192(_FFDHParams): # From RFC 7919
     mLen = 8192
 
 
-_tls_named_ffdh_groups = { 256: "ffdhe2048", 257: "ffdhe3072",
-                           258: "ffdhe4096", 259: "ffdhe6144",
-                           260: "ffdhe8192" }
+_tls_named_ffdh_groups = {256: "ffdhe2048", 257: "ffdhe3072",
+                          258: "ffdhe4096", 259: "ffdhe6144",
+                          260: "ffdhe8192"}
 
-_tls_named_curves = {  1: "sect163k1",  2: "sect163r1",  3: "sect163r2",
-                       4: "sect193r1",  5: "sect193r2",  6: "sect233k1",
-                       7: "sect233r1",  8: "sect239k1",  9: "sect283k1",
-                      10: "sect283r1", 11: "sect409k1", 12: "sect409r1",
-                      13: "sect571k1", 14: "sect571r1", 15: "secp160k1",
-                      16: "secp160r1", 17: "secp160r2", 18: "secp192k1",
-                      19: "secp192r1", 20: "secp224k1", 21: "secp224r1",
-                      22: "secp256k1", 23: "secp256r1", 24: "secp384r1",
-                      25: "secp521r1", 26: "brainpoolP256r1",
-                      27: "brainpoolP384r1", 28: "brainpoolP512r1",
-                      29: "x25519",    30: "x448",
-                      0xff01: "arbitrary_explicit_prime_curves",
-                      0xff02: "arbitrary_explicit_char2_curves"}
+_tls_named_curves = {1: "sect163k1", 2: "sect163r1", 3: "sect163r2",
+                     4: "sect193r1", 5: "sect193r2", 6: "sect233k1",
+                     7: "sect233r1", 8: "sect239k1", 9: "sect283k1",
+                     10: "sect283r1", 11: "sect409k1", 12: "sect409r1",
+                     13: "sect571k1", 14: "sect571r1", 15: "secp160k1",
+                     16: "secp160r1", 17: "secp160r2", 18: "secp192k1",
+                     19: "secp192r1", 20: "secp224k1", 21: "secp224r1",
+                     22: "secp256k1", 23: "secp256r1", 24: "secp384r1",
+                     25: "secp521r1", 26: "brainpoolP256r1",
+                     27: "brainpoolP384r1", 28: "brainpoolP512r1",
+                     29: "x25519", 30: "x448",
+                     0xff01: "arbitrary_explicit_prime_curves",
+                     0xff02: "arbitrary_explicit_char2_curves"}
 
 _tls_named_groups = {}
 _tls_named_groups.update(_tls_named_ffdh_groups)
 _tls_named_groups.update(_tls_named_curves)
 
 
+def _tls_named_groups_import(group, pubbytes):
+    if group in _tls_named_ffdh_groups:
+        params = _ffdh_groups[_tls_named_ffdh_groups[group]][0]
+        pn = params.parameter_numbers()
+        public_numbers = dh.DHPublicNumbers(pubbytes, pn)
+        return public_numbers.public_key(default_backend())
+    elif group in _tls_named_curves:
+        if _tls_named_curves[group] in ["x25519", "x448"]:
+            if conf.crypto_valid_advanced:
+                if _tls_named_curves[group] == "x25519":
+                    import_point = x25519.X25519PublicKey.from_public_bytes
+                else:
+                    import_point = x448.X448PublicKey.from_public_bytes
+                return import_point(pubbytes)
+        else:
+            curve = ec._CURVE_TYPES[_tls_named_curves[group]]()
+            try:  # cryptography >= 2.5
+                return ec.EllipticCurvePublicKey.from_encoded_point(
+                    curve,
+                    pubbytes
+                )
+            except AttributeError:
+                pub_num = ec.EllipticCurvePublicNumbers.from_encoded_point(
+                    curve,
+                    pubbytes
+                ).public_numbers()
+                return pub_num.public_key(default_backend())
+
+
+def _tls_named_groups_pubbytes(privkey):
+    if isinstance(privkey, dh.DHPrivateKey):
+        pubkey = privkey.public_key()
+        return pubkey.public_numbers().y
+    elif isinstance(privkey, (x25519.X25519PrivateKey,
+                              x448.X448PrivateKey)):
+        pubkey = privkey.public_key()
+        return pubkey.public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw
+        )
+    else:
+        pubkey = privkey.public_key()
+        try:
+            # cryptography >= 2.5
+            return pubkey.public_bytes(
+                serialization.Encoding.X962,
+                serialization.PublicFormat.UncompressedPoint
+            )
+        except TypeError:
+            # older versions
+            return pubkey.public_numbers().encode_point()
+
+
+def _tls_named_groups_generate(group):
+    if group in _tls_named_ffdh_groups:
+        params = _ffdh_groups[_tls_named_ffdh_groups[group]][0]
+        return params.generate_private_key()
+    elif group in _tls_named_curves:
+        group_name = _tls_named_curves[group]
+        if group_name in ["x25519", "x448"]:
+            if conf.crypto_valid_advanced:
+                if group_name == "x25519":
+                    return x25519.X25519PrivateKey.generate()
+                else:
+                    return x448.X448PrivateKey.generate()
+            else:
+                warning(
+                    "Your cryptography version doesn't support " + group_name
+                )
+        else:
+            curve = ec._CURVE_TYPES[_tls_named_curves[group]]()
+            return ec.generate_private_key(curve, default_backend())
+
 # Below lies ghost code since the shift from 'ecdsa' to 'cryptography' lib.
 # Part of the code has been kept, but commented out, in case anyone would like
 # to improve ECC support in 'cryptography' (namely for the compressed point
 # format and additional curves).
-# 
+#
 # Recommended curve parameters from www.secg.org/SEC2-Ver-1.0.pdf
 # and www.ecc-brainpool.org/download/Domain-parameters.pdf
 #
 #
-#import math
+# import math
 #
-#from scapy.utils import long_converter, binrepr
-#from scapy.layers.tls.crypto.pkcs1 import pkcs_i2osp, pkcs_os2ip
+# from scapy.utils import long_converter, binrepr
+# from scapy.layers.tls.crypto.pkcs1 import pkcs_i2osp, pkcs_os2ip
 #
 #
-#def encode_point(point, point_format=0):
+# def encode_point(point, point_format=0):
 #    """
 #    Return a string representation of the Point p, according to point_format.
 #    """
@@ -459,16 +546,16 @@ _tls_named_groups.update(_tls_named_curves)
 #    return frmt + x + y
 #
 #
-#try:
+# try:
 #    import ecdsa
 #    ecdsa_support = True
-#except ImportError:
+# except ImportError:
 #    import logging
 #    log_loading = logging.getLogger("scapy.loading")
 #    log_loading.info("Can't import python ecdsa lib. No curves.")
 #
 #
-#if ecdsa_support:
+# if ecdsa_support:
 #
 #    from ecdsa.ellipticcurve import CurveFp, Point
 #    from ecdsa.curves import Curve
@@ -498,17 +585,17 @@ _tls_named_groups.update(_tls_named_curves)
 #            # perform the y coordinate computation with self.tls_ec
 #            y_square = (x*x*x + curve.a()*x + curve.b()) % p
 #            y = square_root_mod_prime(y_square, p)
-#            y_parity = ord(point_format) % 2    # \x02 means even, \x03 means odd
+#            y_parity = ord(point_format) % 2    # \x02 means even, \x03 means odd  # noqa: E501
 #            if y % 2 != y_parity:
 #                y = -y % p
 #        else:
 #            raise Exception("Point starts with %s. This encoding "
 #                            "is not recognized." % repr(point_format))
 #        if not curve.contains_point(x, y):
-#            raise Exception("The point we extracted does not belong on the curve!")
+#            raise Exception("The point we extracted does not belong on the curve!")  # noqa: E501
 #        return x, y
 #
-#    def import_curve(p, a, b, g, r, name="dummyName", oid=(1, 3, 132, 0, 0xff)):
+#    def import_curve(p, a, b, g, r, name="dummyName", oid=(1, 3, 132, 0, 0xff)):  # noqa: E501
 #        """
 #        Create an ecdsa.curves.Curve from the usual parameters.
 #        Arguments may be either octet strings or integers,
@@ -527,10 +614,9 @@ _tls_named_groups.update(_tls_named_curves)
 #        generator = Point(curve, x, y, r)
 #        return Curve(name, curve, generator, oid)
 
+# Named curves
 
-    ### Named curves
-
-    # We always provide _a as a positive integer.
+# We always provide _a as a positive integer.
 
 #    _p          = long_converter("""
 #                  ffffffff ffffffff ffffffff fffffffe ffffac73""")
@@ -687,4 +773,3 @@ _tls_named_groups.update(_tls_named_curves)
 #    generator   = Point(curve, _Gx, _Gy, _r)
 #    BRNP512r1   = Curve("BRNP512r1", curve, generator,
 #                        (1, 3, 36, 3, 3, 2, 8, 1, 1, 13), "brainpoolP512r1")
-

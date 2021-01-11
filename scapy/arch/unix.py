@@ -1,28 +1,28 @@
-## This file is part of Scapy
-## See http://www.secdev.org/projects/scapy for more informations
-## Copyright (C) Philippe Biondi <phil@secdev.org>
-## This program is published under a GPLv2 license
+# This file is part of Scapy
+# See http://www.secdev.org/projects/scapy for more information
+# Copyright (C) Philippe Biondi <phil@secdev.org>
+# This program is published under a GPLv2 license
 
 """
 Common customizations for all Unix-like operating systems other than Linux
 """
 
-import sys,os,struct,socket,time
-from fcntl import ioctl
+import os
 import socket
 
-from scapy.error import warning, log_interactive
 import scapy.config
 import scapy.utils
-from scapy.utils6 import in6_getscope, construct_source_candidate_set
-from scapy.utils6 import in6_isvalid, in6_ismlladdr, in6_ismnladdr
-from scapy.consts import FREEBSD, NETBSD, OPENBSD, SOLARIS, LOOPBACK_NAME
 from scapy.arch import get_if_addr
 from scapy.config import conf
+from scapy.consts import FREEBSD, NETBSD, OPENBSD, SOLARIS
+from scapy.error import warning, log_interactive
+from scapy.pton_ntop import inet_pton
+from scapy.utils6 import in6_getscope, construct_source_candidate_set
+from scapy.utils6 import in6_isvalid, in6_ismlladdr, in6_ismnladdr
 
 
 ##################
-## Routes stuff ##
+#  Routes stuff  #
 ##################
 
 def _guess_iface_name(netif):
@@ -42,67 +42,73 @@ def _guess_iface_name(netif):
 
 
 def read_routes():
+    """Return a list of IPv4 routes than can be used by Scapy.
+
+    This function parses netstat.
+    """
     if SOLARIS:
-        f=os.popen("netstat -rvn") # -f inet
+        f = os.popen("netstat -rvn -f inet")
     elif FREEBSD:
-        f=os.popen("netstat -rnW") # -W to handle long interface names
+        f = os.popen("netstat -rnW -f inet")  # -W to show long interface names
     else:
-        f=os.popen("netstat -rn") # -f inet
+        f = os.popen("netstat -rn -f inet")
     ok = 0
     mtu_present = False
     prio_present = False
+    refs_present = False
+    use_present = False
     routes = []
     pending_if = []
-    for l in f.readlines():
-        if not l:
+    for line in f.readlines():
+        if not line:
             break
-        l = l.strip()
-        if l.find("----") >= 0: # a separation line
+        line = line.strip().lower()
+        if line.find("----") >= 0:  # a separation line
             continue
         if not ok:
-            if l.find("Destination") >= 0:
+            if line.find("destination") >= 0:
                 ok = 1
-                mtu_present = "Mtu" in l
-                prio_present = "Prio" in l
-                refs_present = "Refs" in l
+                mtu_present = "mtu" in line
+                prio_present = "prio" in line
+                refs_present = "ref" in line  # There is no s on Solaris
+                use_present = "use" in line or "nhop" in line
             continue
-        if not l:
+        if not line:
             break
+        rt = line.split()
         if SOLARIS:
-            lspl = l.split()
-            if len(lspl) == 10:
-                dest,mask,gw,netif,mxfrg,rtt,ref,flg = lspl[:8]
-            else: # missing interface
-                dest,mask,gw,mxfrg,rtt,ref,flg = lspl[:7]
-                netif=None
+            dest, netmask, gw, netif = rt[:4]
+            flg = rt[4 + mtu_present + refs_present]
         else:
-            rt = l.split()
-            dest,gw,flg = rt[:3]
-            locked = OPENBSD and rt[6] == "L"
-            netif = rt[4 + mtu_present + prio_present + refs_present + locked]
-        if flg.find("Lc") >= 0:
+            dest, gw, flg = rt[:3]
+            locked = OPENBSD and rt[6] == "l"
+            offset = mtu_present + prio_present + refs_present + locked
+            offset += use_present
+            netif = rt[3 + offset]
+        if flg.find("lc") >= 0:
             continue
-        if dest == "default":
+        elif dest == "default":
             dest = 0
             netmask = 0
+        elif SOLARIS:
+            dest = scapy.utils.atol(dest)
+            netmask = scapy.utils.atol(netmask)
         else:
-            if SOLARIS:
-                netmask = scapy.utils.atol(mask)
-            elif "/" in dest:
-                dest,netmask = dest.split("/")
+            if "/" in dest:
+                dest, netmask = dest.split("/")
                 netmask = scapy.utils.itom(int(netmask))
             else:
                 netmask = scapy.utils.itom((dest.count(".") + 1) * 8)
-            dest += ".0"*(3-dest.count("."))
+            dest += ".0" * (3 - dest.count("."))
             dest = scapy.utils.atol(dest)
         # XXX: TODO: add metrics for unix.py (use -e option on netstat)
         metric = 1
-        if not "G" in flg:
+        if "g" not in flg:
             gw = '0.0.0.0'
         if netif is not None:
             try:
                 ifaddr = get_if_addr(netif)
-                routes.append((dest,netmask, gw, netif, ifaddr, metric))
+                routes.append((dest, netmask, gw, netif, ifaddr, metric))
             except OSError as exc:
                 if exc.message == 'Device not configured':
                     # This means the interface name is probably truncated by
@@ -111,22 +117,22 @@ def read_routes():
                     guessed_netif = _guess_iface_name(netif)
                     if guessed_netif is not None:
                         ifaddr = get_if_addr(guessed_netif)
-                        routes.append((dest, netmask, gw, guessed_netif, ifaddr, metric))
+                        routes.append((dest, netmask, gw, guessed_netif, ifaddr, metric))  # noqa: E501
                     else:
-                        warning("Could not guess partial interface name: %s", netif)
+                        warning("Could not guess partial interface name: %s", netif)  # noqa: E501
                 else:
                     raise
         else:
-            pending_if.append((dest,netmask,gw))
+            pending_if.append((dest, netmask, gw))
     f.close()
 
     # On Solaris, netstat does not provide output interfaces for some routes
     # We need to parse completely the routing table to route their gw and
     # know their output interface
-    for dest,netmask,gw in pending_if:
+    for dest, netmask, gw in pending_if:
         gw_l = scapy.utils.atol(gw)
-        max_rtmask,gw_if,gw_if_addr, = 0,None,None
-        for rtdst,rtmask,_,rtif,rtaddr in routes[:]:
+        max_rtmask, gw_if, gw_if_addr, = 0, None, None
+        for rtdst, rtmask, _, rtif, rtaddr in routes[:]:
             if gw_l & rtmask == rtdst:
                 if rtmask >= max_rtmask:
                     max_rtmask = rtmask
@@ -135,15 +141,16 @@ def read_routes():
         # XXX: TODO add metrics
         metric = 1
         if gw_if:
-            routes.append((dest,netmask, gw, gw_if, gw_if_addr, metric))
+            routes.append((dest, netmask, gw, gw_if, gw_if_addr, metric))
         else:
             warning("Did not find output interface to reach gateway %s", gw)
 
     return routes
 
 ############
-### IPv6 ###
+#   IPv6   #
 ############
+
 
 def _in6_getifaddr(ifname):
     """
@@ -153,7 +160,7 @@ def _in6_getifaddr(ifname):
     # Get the output of ifconfig
     try:
         f = os.popen("%s %s" % (conf.prog.ifconfig, ifname))
-    except OSError as msg:
+    except OSError:
         log_interactive.warning("Failed to execute ifconfig.")
         return []
 
@@ -161,23 +168,25 @@ def _in6_getifaddr(ifname):
     ret = []
     for line in f:
         if "inet6" in line:
-            addr = line.rstrip().split(None, 2)[1] # The second element is the IPv6 address
+            addr = line.rstrip().split(None, 2)[1]  # The second element is the IPv6 address  # noqa: E501
         else:
             continue
-        if '%' in line: # Remove the interface identifier if present
+        if '%' in line:  # Remove the interface identifier if present
             addr = addr.split("%", 1)[0]
 
         # Check if it is a valid IPv6 address
         try:
-            socket.inet_pton(socket.AF_INET6, addr)
-        except:
+            inet_pton(socket.AF_INET6, addr)
+        except (socket.error, ValueError):
             continue
 
         # Get the scope and keep the address
         scope = in6_getscope(addr)
         ret.append((addr, scope, ifname))
 
+    f.close()
     return ret
+
 
 def in6_getifaddr():
     """
@@ -190,24 +199,28 @@ def in6_getifaddr():
     """
 
     # List all network interfaces
-    if OPENBSD:
+    if OPENBSD or SOLARIS:
+        if SOLARIS:
+            cmd = "%s -a6"
+        else:
+            cmd = "%s"
         try:
-            f = os.popen("%s" % conf.prog.ifconfig)
-        except OSError as msg:
+            f = os.popen(cmd % conf.prog.ifconfig)
+        except OSError:
             log_interactive.warning("Failed to execute ifconfig.")
             return []
 
         # Get the list of network interfaces
         splitted_line = []
-        for l in f:
-            if "flags" in l:
-                iface = l.split()[0].rstrip(':')
+        for line in f:
+            if "flags" in line:
+                iface = line.split()[0].rstrip(':')
                 splitted_line.append(iface)
 
-    else: # FreeBSD, NetBSD or Darwin
+    else:  # FreeBSD, NetBSD or Darwin
         try:
             f = os.popen("%s -l" % conf.prog.ifconfig)
-        except OSError as msg:
+        except OSError:
             log_interactive.warning("Failed to execute ifconfig.")
             return []
 
@@ -217,11 +230,15 @@ def in6_getifaddr():
     ret = []
     for i in splitted_line:
         ret += _in6_getifaddr(i)
+    f.close()
     return ret
 
 
 def read_routes6():
-    """Return a list of IPv6 routes than can be used by Scapy."""
+    """Return a list of IPv6 routes than can be used by Scapy.
+
+    This function parses netstat.
+    """
 
     # Call netstat to retrieve IPv6 routes
     fd_netstat = os.popen("netstat -rn -f inet6")
@@ -229,6 +246,7 @@ def read_routes6():
     # List interfaces IPv6 addresses
     lifaddr = in6_getifaddr()
     if not lifaddr:
+        fd_netstat.close()
         return []
 
     # Routes header information
@@ -268,7 +286,7 @@ def read_routes6():
         metric = 1
 
         # Check flags
-        if not "U" in flags:  # usable route
+        if "U" not in flags:  # usable route
             continue
         if "R" in flags:  # Host or net unreachable
             continue
@@ -314,24 +332,24 @@ def read_routes6():
             continue
         try:
             destination_plen = int(destination_plen)
-        except:
+        except Exception:
             warning("Invalid IPv6 prefix length in route entry !")
             continue
         if in6_ismlladdr(destination) or in6_ismnladdr(destination):
             # Note: multicast routing is handled in Route6.route()
             continue
 
-        if LOOPBACK_NAME in dev:
+        if conf.loopback_name in dev:
             # Handle ::1 separately
             cset = ["::1"]
             next_hop = "::"
         else:
             # Get possible IPv6 source addresses
             devaddrs = (x for x in lifaddr if x[2] == dev)
-            cset = construct_source_candidate_set(destination, destination_plen, devaddrs)
+            cset = construct_source_candidate_set(destination, destination_plen, devaddrs)  # noqa: E501
 
         if len(cset):
-            routes.append((destination, destination_plen, next_hop, dev, cset, metric))
+            routes.append((destination, destination_plen, next_hop, dev, cset, metric))  # noqa: E501
 
     fd_netstat.close()
     return routes

@@ -1,0 +1,8 @@
+Test-Command: debian/tests/upstream-test.sh nonroot_linux test_install_python3
+Depends: @,  python3-brotli, python3-cryptography, python3-mock, tcpdump (>> 4.99.0), tcpreplay, tshark, python3-can, kmod, openssl
+Restrictions: allow-stderr, needs-internet
+
+# Too many tests fail
+#Test-Command: debian/tests/upstream-test.sh root_linux
+#Depends: @,  python3-brotli, python3-cryptography, python3-mock, tcpdump, tcpreplay, tshark, python3-can, kmod, openssl, iproute2, net-tools, ca-certificates
+#Restrictions: allow-stderr, needs-root, needs-internet

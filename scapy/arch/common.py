@@ -1,85 +1,138 @@
-## This file is part of Scapy
-## See http://www.secdev.org/projects/scapy for more informations
-## Copyright (C) Philippe Biondi <phil@secdev.org>
-## This program is published under a GPLv2 license
+# This file is part of Scapy
+# See http://www.secdev.org/projects/scapy for more information
+# Copyright (C) Philippe Biondi <phil@secdev.org>
+# This program is published under a GPLv2 license
 
 """
 Functions common to different architectures
 """
 
+import ctypes
 import socket
-from fcntl import ioctl
-import os, struct, ctypes
-from ctypes import POINTER, Structure
-from ctypes import c_uint, c_uint32, c_ushort, c_ubyte
+import struct
+import sys
+import time
+from scapy.consts import WINDOWS
 from scapy.config import conf
-import scapy.modules.six as six
+from scapy.data import MTU, ARPHRD_TO_DLT
+from scapy.error import Scapy_Exception
 
-## UTILS
+if not WINDOWS:
+    from fcntl import ioctl
+
+# UTILS
+
 
 def get_if(iff, cmd):
     """Ease SIOCGIF* ioctl calls"""
 
     sck = socket.socket()
-    ifreq = ioctl(sck, cmd, struct.pack("16s16x", iff.encode("utf8")))
-    sck.close()
-    return ifreq
-
-## BPF HANDLERS
-
-class bpf_insn(Structure):
-    """"The BPF instruction data structure"""
-    _fields_ = [("code", c_ushort),
-                ("jt", c_ubyte),
-                ("jf", c_ubyte),
-                ("k", c_uint32)]
+    try:
+        return ioctl(sck, cmd, struct.pack("16s16x", iff.encode("utf8")))
+    finally:
+        sck.close()
 
 
-class bpf_program(Structure):
-    """"Structure for BIOCSETF"""
-    _fields_ = [("bf_len", c_uint),
-                ("bf_insns", POINTER(bpf_insn))]
+def get_if_raw_hwaddr(iff):
+    """Get the raw MAC address of a local interface.
 
-def _legacy_bpf_pointer(tcpdump_lines):
-    """Get old-format BPF Pointer. Deprecated"""
-    X86_64 = os.uname()[4] in ['x86_64', 'aarch64']
-    size = int(tcpdump_lines[0])
-    bpf = ""
-    for l in tcpdump_lines[1:]:
-        bpf += struct.pack("HBBI",*map(long,l.split()))
+    This function uses SIOCGIFHWADDR calls, therefore only works
+    on some distros.
 
-    # Thanks to http://www.netprojects.de/scapy-with-pypy-solved/ for the pypy trick
-    if conf.use_pypy and six.PY2:
-        str_buffer = ctypes.create_string_buffer(bpf)
-        return struct.pack('HL', size, ctypes.addressof(str_buffer))
-    else:
-        # XXX. Argl! We need to give the kernel a pointer on the BPF,
-        # Python object header seems to be 20 bytes. 36 bytes for x86 64bits arch.
-        if X86_64:
-            return struct.pack("HL", size, id(bpf)+36)
-        else:
-            return struct.pack("HI", size, id(bpf)+20)
+    :param iff: the network interface name as a string
+    :returns: the corresponding raw MAC address
+    """
+    from scapy.arch import SIOCGIFHWADDR
+    return struct.unpack("16xh6s8x", get_if(iff, SIOCGIFHWADDR))
 
-def get_bpf_pointer(tcpdump_lines):
-    """Create a BPF Pointer for TCPDump filter"""
-    if conf.use_pypy and six.PY2:
-        return _legacy_bpf_pointer(tcpdump_lines)
-    
-    # Allocate BPF instructions
-    size = int(tcpdump_lines[0])
-    bpf_insn_a = bpf_insn * size
-    bip = bpf_insn_a()
+# SOCKET UTILS
 
-    # Fill the BPF instruction structures with the byte code
-    tcpdump_lines = tcpdump_lines[1:]
-    i = 0
-    for line in tcpdump_lines:
-        values = [int(v) for v in line.split()]
-        bip[i].code = c_ushort(values[0])
-        bip[i].jt = c_ubyte(values[1])
-        bip[i].jf = c_ubyte(values[2])
-        bip[i].k = c_uint(values[3])
-        i += 1
 
-    # Create the BPF program
-    return bpf_program(size, bip)
+def _select_nonblock(sockets, remain=None):
+    """This function is called during sendrecv() routine to select
+    the available sockets.
+    """
+    # pcap sockets aren't selectable, so we return all of them
+    # and ask the selecting functions to use nonblock_recv instead of recv
+    def _sleep_nonblock_recv(self):
+        res = self.nonblock_recv()
+        if res is None:
+            time.sleep(conf.recv_poll_rate)
+        return res
+    # we enforce remain=None: don't wait.
+    return sockets, _sleep_nonblock_recv
+
+# BPF HANDLERS
+
+
+def compile_filter(filter_exp, iface=None, linktype=None,
+                   promisc=False):
+    """Asks libpcap to parse the filter, then build the matching
+    BPF bytecode.
+
+    :param iface: if provided, use the interface to compile
+    :param linktype: if provided, use the linktype to compile
+    """
+    try:
+        from scapy.libs.winpcapy import (
+            PCAP_ERRBUF_SIZE,
+            pcap_open_live,
+            pcap_compile,
+            pcap_compile_nopcap,
+            pcap_close
+        )
+        from scapy.libs.structures import bpf_program
+    except OSError:
+        raise ImportError(
+            "libpcap is not available. Cannot compile filter !"
+        )
+    from ctypes import create_string_buffer
+    bpf = bpf_program()
+    bpf_filter = create_string_buffer(filter_exp.encode("utf8"))
+    if not linktype:
+        # Try to guess linktype to avoid root
+        if not iface:
+            if not conf.iface:
+                raise Scapy_Exception(
+                    "Please provide an interface or linktype!"
+                )
+            if WINDOWS:
+                iface = conf.iface.pcap_name
+            else:
+                iface = conf.iface
+        # Try to guess linktype to avoid requiring root
+        try:
+            arphd = get_if_raw_hwaddr(iface)[0]
+            linktype = ARPHRD_TO_DLT.get(arphd)
+        except Exception:
+            # Failed to use linktype: use the interface
+            pass
+    if linktype is not None:
+        ret = pcap_compile_nopcap(
+            MTU, linktype, ctypes.byref(bpf), bpf_filter, 0, -1
+        )
+    elif iface:
+        err = create_string_buffer(PCAP_ERRBUF_SIZE)
+        iface = create_string_buffer(iface.encode("utf8"))
+        pcap = pcap_open_live(
+            iface, MTU, promisc, 0, err
+        )
+        error = bytes(bytearray(err)).strip(b"\x00")
+        if error:
+            raise OSError(error)
+        ret = pcap_compile(
+            pcap, ctypes.byref(bpf), bpf_filter, 0, -1
+        )
+        pcap_close(pcap)
+    if ret == -1:
+        raise Scapy_Exception(
+            "Failed to compile filter expression %s (%s)" % (filter_exp, ret)
+        )
+    if conf.use_pypy and sys.pypy_version_info <= (7, 3, 0):
+        # PyPy < 7.3.0 has a broken behavior
+        # https://bitbucket.org/pypy/pypy/issues/3114
+        return struct.pack(
+            'HL',
+            bpf.bf_len, ctypes.addressof(bpf.bf_insns.contents)
+        )
+    return bpf

@@ -1,7 +1,7 @@
-## This file is part of Scapy
-## See http://www.secdev.org/projects/scapy for more informations
-## Copyright (C) Philippe Biondi <phil@secdev.org>
-## This program is published under a GPLv2 license
+# This file is part of Scapy
+# See http://www.secdev.org/projects/scapy for more information
+# Copyright (C) Philippe Biondi <phil@secdev.org>
+# This program is published under a GPLv2 license
 
 """
 Resolve Autonomous Systems (AS).
@@ -9,38 +9,41 @@ Resolve Autonomous Systems (AS).
 
 
 from __future__ import absolute_import
-import socket, errno
+import socket
 from scapy.config import conf
-from scapy.compat import *
+from scapy.compat import plain_str
+
 
 class AS_resolver:
     server = None
-    options = "-k" 
+    options = "-k"
+
     def __init__(self, server=None, port=43, options=None):
         if server is not None:
             self.server = server
         self.port = port
         if options is not None:
             self.options = options
-        
+
     def _start(self):
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.s.connect((self.server,self.port))
+        self.s.connect((self.server, self.port))
         if self.options:
-            self.s.send(self.options.encode("utf8")+b"\n")
+            self.s.send(self.options.encode("utf8") + b"\n")
             self.s.recv(8192)
+
     def _stop(self):
         self.s.close()
-        
+
     def _parse_whois(self, txt):
-        asn,desc = None,b""
-        for l in txt.splitlines():
-            if not asn and l.startswith(b"origin:"):
-                asn = plain_str(l[7:].strip())
-            if l.startswith(b"descr:"):
+        asn, desc = None, b""
+        for line in txt.splitlines():
+            if not asn and line.startswith(b"origin:"):
+                asn = plain_str(line[7:].strip())
+            if line.startswith(b"descr:"):
                 if desc:
-                    desc += r"\n"
-                desc += l[6:].strip()
+                    desc += b"\n"
+                desc += line[6:].strip()
             if asn is not None and desc:
                 break
         return asn, plain_str(desc.strip())
@@ -48,19 +51,21 @@ class AS_resolver:
     def _resolve_one(self, ip):
         self.s.send(("%s\n" % ip).encode("utf8"))
         x = b""
-        while not (b"%" in x  or b"source" in x):
+        while not (b"%" in x or b"source" in x):
             x += self.s.recv(8192)
         asn, desc = self._parse_whois(x)
-        return ip,asn,desc
+        return ip, asn, desc
+
     def resolve(self, *ips):
         self._start()
         ret = []
         for ip in ips:
-            ip,asn,desc = self._resolve_one(ip)
+            ip, asn, desc = self._resolve_one(ip)
             if asn is not None:
-                ret.append((ip,asn,desc))
+                ret.append((ip, asn, desc))
         self._stop()
         return ret
+
 
 class AS_resolver_riswhois(AS_resolver):
     server = "riswhois.ripe.net"
@@ -70,21 +75,26 @@ class AS_resolver_riswhois(AS_resolver):
 class AS_resolver_radb(AS_resolver):
     server = "whois.ra.net"
     options = "-k -M"
-    
+
 
 class AS_resolver_cymru(AS_resolver):
     server = "whois.cymru.com"
     options = None
+
     def resolve(self, *ips):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect((self.server,self.port))
-        s.send(b"begin\r\n"+b"\r\n".join(ip.encode("utf8") for ip in ips)+b"\r\nend\r\n")
+        s.connect((self.server, self.port))
+        s.send(
+            b"begin\r\n" +
+            b"\r\n".join(ip.encode() for ip in ips) +
+            b"\r\nend\r\n"
+        )
         r = b""
         while True:
-            l = s.recv(8192)
-            if l == b"":
+            line = s.recv(8192)
+            if line == b"":
                 break
-            r += l
+            r += line
         s.close()
 
         return self.parse(r)
@@ -93,38 +103,40 @@ class AS_resolver_cymru(AS_resolver):
         """Parse bulk cymru data"""
 
         ASNlist = []
-        for l in data.splitlines()[1:]:
-            l = plain_str(l)
-            if "|" not in l:
+        for line in data.splitlines()[1:]:
+            line = plain_str(line)
+            if "|" not in line:
                 continue
-            asn, ip, desc = [elt.strip() for elt in l.split('|')]
+            asn, ip, desc = [elt.strip() for elt in line.split('|')]
             if asn == "NA":
                 continue
             asn = "AS%s" % asn
             ASNlist.append((ip, asn, desc))
         return ASNlist
 
+
 class AS_resolver_multi(AS_resolver):
-    resolvers_list = ( AS_resolver_riswhois(),AS_resolver_radb(),AS_resolver_cymru() )
+    resolvers_list = (AS_resolver_riswhois(), AS_resolver_radb(),
+                      AS_resolver_cymru())
+    resolvers_list = resolvers_list[1:]
+
     def __init__(self, *reslist):
+        AS_resolver.__init__(self)
         if reslist:
             self.resolvers_list = reslist
+
     def resolve(self, *ips):
         todo = ips
         ret = []
         for ASres in self.resolvers_list:
             try:
                 res = ASres.resolve(*todo)
-            except socket.error as e:
-                if e[0] in [errno.ECONNREFUSED, errno.ETIMEDOUT, errno.ECONNRESET]:
-                    continue
-            resolved = [ ip for ip,asn,desc in res ]
-            todo = [ ip for ip in todo if ip not in resolved ]
+            except socket.error:
+                continue
+            todo = [ip for ip in todo if ip not in [r[0] for r in res]]
             ret += res
-            if len(todo) == 0:
+            if not todo:
                 break
-        if len(ips) != len(ret):
-            raise RuntimeError("Could not contact whois providers")
         return ret
 
 

@@ -41,7 +41,7 @@ assert gre_pptp.version == 1
 assert gre_pptp.proto == 0x880b
 assert gre_pptp.payload_len == 28
 assert gre_pptp.call_id == 39925
-assert gre_pptp.seqence_number == 0x0
+assert gre_pptp.sequence_number == 0x0
 
 assert HDLC in pkt
 assert PPP in pkt
@@ -51,7 +51,7 @@ assert PPP_LCP_Configure in pkt
 ~ gre ip pptp ppp hdlc lcp lcp_echo
 
 pkt = IP(src='192.168.0.1', dst='192.168.0.2') /\
-      GRE_PPTP(seqnum_present=1, acknum_present=1, seqence_number=47, ack_number=42) /\
+      GRE_PPTP(seqnum_present=1, acknum_present=1, sequence_number=47, ack_number=42) /\
       HDLC() / PPP() / PPP_LCP_Echo(id=42, magic_number=4242, data='abcdef')
 pkt_data = raw(pkt)
 pkt_data_ref = hex_bytes('4500003600010000402ff944c0a80001c0a800023081880b001200000000002f000000'\
@@ -70,7 +70,7 @@ assert pkt[GRE_PPTP].routing_present == 0
 assert pkt[GRE_PPTP].key_present == 1
 assert pkt[GRE_PPTP].seqnum_present == 1
 assert pkt[GRE_PPTP].acknum_present == 1
-assert pkt[GRE_PPTP].seqence_number == 47
+assert pkt[GRE_PPTP].sequence_number == 47
 assert pkt[GRE_PPTP].ack_number == 42
 assert pkt[PPP].proto == 0xc021
 assert pkt[PPP_LCP_Echo].code == 9
@@ -472,7 +472,7 @@ start_control_connection = PPTPStartControlConnectionRequest(framing_capabilitie
                                                              firmware_revision=47,
                                                              host_name='test host name',
                                                              vendor_string='test vendor string')
-start_control_connection_ref_data = hex_bytes('009c00011a2b3c4d00010000000100000000000100000002002a00'\
+start_control_connection_ref_data = hex_bytes('009c00011a2b3c4d00010000010000000000000100000002002a00'\
                                     '2f7465737420686f7374206e616d65000000000000000000000000'\
                                     '000000000000000000000000000000000000000000000000000000'\
                                     '0000000000000000000000746573742076656e646f722073747269'\
@@ -485,7 +485,7 @@ start_control_connection_pkt = PPTP(start_control_connection_ref_data)
 
 assert isinstance(start_control_connection_pkt, PPTPStartControlConnectionRequest)
 assert start_control_connection_pkt.magic_cookie == 0x1a2b3c4d
-assert start_control_connection_pkt.protocol_version == 1
+assert start_control_connection_pkt.protocol_version == 0x0100
 assert start_control_connection_pkt.framing_capabilities == 1
 assert start_control_connection_pkt.bearer_capabilities == 2
 assert start_control_connection_pkt.maximum_channels == 42
@@ -500,7 +500,7 @@ start_control_connection_reply = PPTPStartControlConnectionReply(result_code='Ge
                                                                  framing_capabilities='Synchronous Framing supported',
                                                                  bearer_capabilities='Analog access supported',
                                                                  vendor_string='vendor')
-start_control_connection_reply_ref_data = hex_bytes('009c00011a2b3c4d00020000000102010000000200000001ffff0'\
+start_control_connection_reply_ref_data = hex_bytes('009c00011a2b3c4d00020000010002010000000200000001ffff0'\
                                           '1006c696e75780000000000000000000000000000000000000000'\
                                           '00000000000000000000000000000000000000000000000000000'\
                                           '000000000000000000000000076656e646f720000000000000000'\
@@ -513,7 +513,7 @@ start_control_connection_reply_pkt = PPTP(start_control_connection_reply_ref_dat
 
 assert isinstance(start_control_connection_reply_pkt, PPTPStartControlConnectionReply)
 assert start_control_connection_reply_pkt.magic_cookie == 0x1a2b3c4d
-assert start_control_connection_reply_pkt.protocol_version == 1
+assert start_control_connection_reply_pkt.protocol_version == 0x0100
 assert start_control_connection_reply_pkt.result_code == 2
 assert start_control_connection_reply_pkt.error_code == 1
 assert start_control_connection_reply_pkt.framing_capabilities == 2

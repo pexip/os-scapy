@@ -1,5 +1,5 @@
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more informations
+# See http://www.secdev.org/projects/scapy for more information
 # Copyright (C) Philippe Biondi <phil@secdev.org>
 # This program is published under a GPLv2 license
 
@@ -14,23 +14,23 @@ import time
 import datetime
 
 from scapy.packet import Packet, bind_layers
-from scapy.fields import (BitField, BitEnumField, ByteField, ByteEnumField, \
-XByteField, SignedByteField, FlagsField, ShortField, LEShortField, IntField,\
-LEIntField, FixedPointField, IPField, StrField, StrFixedLenField,\
-StrFixedLenEnumField, XStrFixedLenField, PacketField, PacketLenField,\
-PacketListField, FieldListField, ConditionalField, PadField)
+from scapy.fields import BitField, BitEnumField, ByteField, ByteEnumField, \
+    XByteField, SignedByteField, FlagsField, ShortField, LEShortField, \
+    IntField, LEIntField, FixedPointField, IPField, StrField, \
+    StrFixedLenField, StrFixedLenEnumField, XStrFixedLenField, PacketField, \
+    PacketLenField, PacketListField, FieldListField, ConditionalField, \
+    PadField
 from scapy.layers.inet6 import IP6Field
 from scapy.layers.inet import UDP
-from scapy.utils import issubtype, lhex
-from scapy.compat import *
+from scapy.utils import lhex
+from scapy.compat import orb
 from scapy.config import conf
 import scapy.modules.six as six
 from scapy.modules.six.moves import range
 
 
-
 #############################################################################
-##### Constants
+# Constants
 #############################################################################
 
 _NTP_AUTH_MD5_MIN_SIZE = 68
@@ -54,7 +54,7 @@ _NTP_HASH_SIZE = 128
 
 
 #############################################################################
-##### Fields and utilities
+#     Fields and utilities
 #############################################################################
 
 class XLEShortField(LEShortField):
@@ -80,7 +80,7 @@ class TimeStampField(FixedPointField):
         val = self.i2h(pkt, val)
         if val < _NTP_BASETIME:
             return val
-        return time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime(val - _NTP_BASETIME))
+        return time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime(val - _NTP_BASETIME))  # noqa: E501
 
     def any2i(self, pkt, val):
         if isinstance(val, six.string_types):
@@ -96,7 +96,7 @@ class TimeStampField(FixedPointField):
 
 
 #############################################################################
-##### NTP
+#     NTP
 #############################################################################
 
 # RFC 5905 / Section 7.3
@@ -207,22 +207,6 @@ class NTP(Packet):
             raise _NTPInvalidDataException(err)
         return s
 
-    # NTPHeader, NTPControl and NTPPrivate are NTP packets.
-    # This might help, for example when reading a pcap file.
-    def haslayer(self, cls):
-        """Specific: NTPHeader().haslayer(NTP) should return True."""
-        if cls == "NTP":
-            if isinstance(self, NTP):
-                return True
-        elif issubtype(cls, NTP):
-            if isinstance(self, cls):
-                return True
-        return super(NTP, self).haslayer(cls)
-
-    def getlayer(self, cls, nb=1, _track=None, _subclass=True, **flt):
-        return super(NTP, self).getlayer(cls, nb=nb, _track=_track,
-                                         _subclass=True, **flt)
-
     def mysummary(self):
         return self.sprintf("NTP v%ir,NTP.version%, %NTP.mode%")
 
@@ -267,10 +251,10 @@ class NTPExtension(Packet):
     Packet handling a NTPv4 extension.
     """
 
-    #________________________________________________________________________
+    #########################################################################
     #
     # RFC 7822
-    #________________________________________________________________________
+    #########################################################################
     #
     # 7.5.  NTP Extension Field Format
     #
@@ -298,7 +282,7 @@ class NTPExtension(Packet):
     #
     #    All extension fields are zero-padded to a word (four octets)
     #    boundary.
-    #________________________________________________________________________
+    #########################################################################
     #
 
     name = "extension"
@@ -355,16 +339,16 @@ class NTPExtensions(Packet):
     Packet handling the NTPv4 extensions and the "MAC part" of the packet.
     """
 
-    #________________________________________________________________________
+    #########################################################################
     #
     # RFC 5905 / RFC 7822
-    #________________________________________________________________________
+    #########################################################################
     #
     # 7.5. NTP Extension Field Format
     #
     # In NTPv4, one or more extension fields can be inserted after the
     # header and before the MAC, if a MAC is present.
-    #________________________________________________________________________
+    #########################################################################
     #
 
     name = "NTPv4 extensions"
@@ -380,10 +364,10 @@ class NTPHeader(NTP):
     Packet handling the RFC 5905 NTP packet.
     """
 
-    #________________________________________________________________________
+    #########################################################################
     #
     # RFC 5905
-    #________________________________________________________________________
+    #########################################################################
     #
     #   0                   1                   2                   3
     #   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -432,10 +416,11 @@ class NTPHeader(NTP):
     #  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     #
     #                  Figure 8: Packet Header Format
-    #________________________________________________________________________
+    #########################################################################
     #
 
     name = "NTPHeader"
+    match_subclass = True
     fields_desc = [
         BitEnumField("leap", 0, 2, _leap_indicator),
         BitField("version", 4, 3),
@@ -467,10 +452,10 @@ class NTPHeader(NTP):
         """
         plen = len(payload)
 
-        if plen > _NTP_AUTH_MD5_TAIL_SIZE:
-            return NTPExtensions
-        elif plen == _NTP_AUTH_MD5_TAIL_SIZE:
+        if plen - 4 in [16, 20, 32, 64]:  # length of MD5, SHA1, SHA256, SHA512
             return NTPAuthenticator
+        elif plen > _NTP_AUTH_MD5_TAIL_SIZE:
+            return NTPExtensions
 
         return Packet.guess_payload_class(self, payload)
 
@@ -489,7 +474,7 @@ class _NTPInvalidDataException(Exception):
 
 
 ##############################################################################
-##### Private (mode 7)
+#     Private (mode 7)
 ##############################################################################
 
 # Operation codes
@@ -539,7 +524,7 @@ _system_event_codes = {
     1: "system restart",
     2: "system or hardware fault",
     3: "system new status word (leap bits or synchronization change)",
-    4: "system new synchronization source or stratum (sys.peer or sys.stratum change)",
+    4: "system new synchronization source or stratum (sys.peer or sys.stratum change)",  # noqa: E501
     5: "system clock reset (offset correction exceeds CLOCK.MAX)",
     6: "system invalid time or date",
     7: "system clock exception",
@@ -689,13 +674,13 @@ class NTPControlStatusField(PacketField):
     This field provides better readability for the "status" field.
     """
 
-    #________________________________________________________________________
+    #########################################################################
     #
     # RFC 1305
-    #________________________________________________________________________
+    #########################################################################
     #
     # Appendix B.3. Commands // ntpd source code: ntp_control.h
-    #________________________________________________________________________
+    #########################################################################
     #
 
     def m2i(self, pkt, m):
@@ -795,16 +780,17 @@ class NTPControl(NTP):
     Packet handling NTP mode 6 / "Control" messages.
     """
 
-    #________________________________________________________________________
+    #########################################################################
     #
     # RFC 1305
-    #________________________________________________________________________
+    #########################################################################
     #
     # Appendix B.3. Commands // ntpd source code: ntp_control.h
-    #________________________________________________________________________
+    #########################################################################
     #
 
     name = "Control message"
+    match_subclass = True
     fields_desc = [
         BitField("zeros", 0, 2),
         BitField("version", 2, 3),
@@ -835,7 +821,7 @@ class NTPControl(NTP):
 
 
 ##############################################################################
-##### Private (mode 7)
+#     Private (mode 7)
 ##############################################################################
 
 _information_error_codes = {
@@ -1509,7 +1495,7 @@ class NTPPrivateRespPacketListField(PacketListField):
             is_v6 = struct.unpack("!I", s[48:52])[0]
             ret = NTPInfoIfStatsIPv6(s) if is_v6 else NTPInfoIfStatsIPv4(s)
         else:
-            ret = _private_data_objects.get(pkt.request_code, conf.raw_layer)(s)
+            ret = _private_data_objects.get(pkt.request_code, conf.raw_layer)(s)  # noqa: E501
 
         return ret
 
@@ -1520,7 +1506,7 @@ class NTPPrivateRespPacketListField(PacketListField):
         if length > 0:
             item_counter = 0
             # Response payloads can be placed in several packets
-            while len(remain) >= pkt.data_item_size and item_counter < pkt.nb_items:
+            while len(remain) >= pkt.data_item_size and item_counter < pkt.nb_items:  # noqa: E501
                 current = remain[:length]
                 remain = remain[length:]
                 current_packet = self.m2i(pkt, current)
@@ -1638,7 +1624,7 @@ class NTPPrivateReqPacketListField(PacketListField):
         length = pkt.data_item_size
         if length > 0:
             item_counter = 0
-            while len(remain) >= pkt.data_item_size * pkt.nb_items and item_counter < pkt.nb_items:
+            while len(remain) >= pkt.data_item_size * pkt.nb_items and item_counter < pkt.nb_items:  # noqa: E501
                 current = remain[:length]
                 remain = remain[length:]
                 current_packet = self.m2i(pkt, current)
@@ -1676,10 +1662,9 @@ class NTPPrivate(NTP):
     Packet handling the private (mode 7) messages.
     """
 
-    #________________________________________________________________________
-    #
+    #########################################################################
     # ntpd source code: ntp_request.h
-    #________________________________________________________________________
+    #########################################################################
     #
     # A mode 7 packet is used exchanging data between an NTP server
     # and a client for purposes other than time synchronization, e.g.
@@ -1737,13 +1722,13 @@ class NTPPrivate(NTP):
     #
     # Err:      Must be 0 for a request.  For a response, holds an error
     #           code relating to the request.  If nonzero, the operation
-    #           requested wasn"t performed.
+    #           requested wasn't performed.
     #
     #           0 - no error
     #           1 - incompatible implementation number
     #           2 - unimplemented request code
-    #           3 - format error (wrong data items, data size, packet size etc.)
-    #           4 - no data available (e.g. request for details on unknown peer)
+    #           3 - format error (wrong data items, data size, packet size etc.)  # noqa: E501
+    #           4 - no data available (e.g. request for details on unknown peer)  # noqa: E501
     #           5-6 I don"t know
     #           7 - authentication failure (i.e. permission denied)
     #
@@ -1761,7 +1746,7 @@ class NTPPrivate(NTP):
     #           data area may be any length between 0 and 500 octets
     #           inclusive.
     #
-    # Message Authentication Code: Same as NTP spec, in definition and function.
+    # Message Authentication Code: Same as NTP spec, in definition and function.  # noqa: E501
     #           May optionally be included in requests which require
     #           authentication, is never included in responses.
     #
@@ -1782,10 +1767,11 @@ class NTPPrivate(NTP):
     # Implementations using encryption might want to include a time stamp
     # or other data in the request packet padding.  The key used for requests
     # is implementation defined, but key 15 is suggested as a default.
-    #________________________________________________________________________
+    #########################################################################
     #
 
     name = "Private (mode 7)"
+    match_subclass = True
     fields_desc = [
         BitField("response", 0, 1),
         BitField("more", 0, 1),
@@ -1827,11 +1813,9 @@ class NTPPrivate(NTP):
 
 
 ##############################################################################
-##### Layer bindings
+#     Layer bindings
 ##############################################################################
 
 bind_layers(UDP, NTP, {"sport": 123})
 bind_layers(UDP, NTP, {"dport": 123})
 bind_layers(UDP, NTP, {"sport": 123, "dport": 123})
-
-

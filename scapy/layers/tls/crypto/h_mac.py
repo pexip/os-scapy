@@ -1,7 +1,7 @@
-## This file is part of Scapy
-## Copyright (C) 2007, 2008, 2009 Arnaud Ebalard
-##                     2015, 2016 Maxence Tury
-## This program is published under a GPLv2 license
+# This file is part of Scapy
+# Copyright (C) 2007, 2008, 2009 Arnaud Ebalard
+#               2015, 2016 Maxence Tury
+# This program is published under a GPLv2 license
 
 """
 HMAC classes.
@@ -12,14 +12,15 @@ import hmac
 
 from scapy.layers.tls.crypto.hash import _tls_hash_algs
 import scapy.modules.six as six
-from scapy.compat import *
+from scapy.compat import bytes_encode
 
-_SSLv3_PAD1_MD5  = b"\x36"*48
-_SSLv3_PAD1_SHA1 = b"\x36"*40
-_SSLv3_PAD2_MD5  = b"\x5c"*48
-_SSLv3_PAD2_SHA1 = b"\x5c"*40
+_SSLv3_PAD1_MD5 = b"\x36" * 48
+_SSLv3_PAD1_SHA1 = b"\x36" * 40
+_SSLv3_PAD2_MD5 = b"\x5c" * 48
+_SSLv3_PAD2_SHA1 = b"\x5c" * 40
 
 _tls_hmac_algs = {}
+
 
 class _GenericHMACMetaclass(type):
     """
@@ -50,14 +51,19 @@ class HMACError(Exception):
     """
     pass
 
+
 class _GenericHMAC(six.with_metaclass(_GenericHMACMetaclass, object)):
     def __init__(self, key=None):
-        self.key = key
+        if key is None:
+            self.key = b""
+        else:
+            self.key = bytes_encode(key)
 
     def digest(self, tbd):
         if self.key is None:
             raise HMACError
-        return hmac.new(raw(self.key), raw(tbd), self.hash_alg.hash_cls).digest()
+        tbd = bytes_encode(tbd)
+        return hmac.new(self.key, tbd, self.hash_alg.hash_cls).digest()
 
     def digest_sslv3(self, tbd):
         if self.key is None:
@@ -87,21 +93,26 @@ class Hmac_NULL(_GenericHMAC):
     def digest_sslv3(self, tbd):
         return b""
 
+
 class Hmac_MD5(_GenericHMAC):
     pass
+
 
 class Hmac_SHA(_GenericHMAC):
     pass
 
+
 class Hmac_SHA224(_GenericHMAC):
     pass
+
 
 class Hmac_SHA256(_GenericHMAC):
     pass
 
+
 class Hmac_SHA384(_GenericHMAC):
     pass
 
+
 class Hmac_SHA512(_GenericHMAC):
     pass
-

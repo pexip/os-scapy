@@ -1,2 +1,7 @@
-setup.py.patch
-paths.patch
+remove-UTscapy-script.patch
+Remove-privacy-breach-in-doc.patch
+Remove-failing-tests.patch
+Change-path-in-test-for-autopkgtest.patch
+add-support-for-python3.9.patch
+Fix-find-library-libc-for-python-3.9.patch
+upstream-42d58d8729.patch
