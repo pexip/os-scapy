@@ -1,23 +1,27 @@
-## This file is part of Scapy
-## See http://www.secdev.org/projects/scapy for more informations
-## Copyright (C) Philippe Biondi <phil@secdev.org>
-## This program is published under a GPLv2 license
+# This file is part of Scapy
+# See http://www.secdev.org/projects/scapy for more information
+# Copyright (C) Philippe Biondi <phil@secdev.org>
+# This program is published under a GPLv2 license
 
 """
 Scapy: create, send, sniff, dissect and manipulate network packets.
 
 Usable either from an interactive console or as a Python library.
-http://www.secdev.org/projects/scapy
+https://scapy.net
 """
 
 import os
 import re
 import subprocess
 
+from scapy.compat import AnyStr
+
 
 _SCAPY_PKG_DIR = os.path.dirname(__file__)
 
+
 def _version_from_git_describe():
+    # type: () -> AnyStr
     """
     Read the version from ``git describe``. It returns the latest tag with an
     optional suffix if the current directory is not exactly on the tag.
@@ -37,46 +41,64 @@ def _version_from_git_describe():
 
         >>> _version_from_git_describe()
         '2.3.2.dev346'
+
+    :raises CalledProcessError: if git is unavailable
+    :return: Scapy's latest tag
     """
-    if not os.path.isdir(os.path.join(os.path.dirname(_SCAPY_PKG_DIR), '.git')):
+    if not os.path.isdir(os.path.join(os.path.dirname(_SCAPY_PKG_DIR), '.git')):  # noqa: E501
         raise ValueError('not in scapy git repo')
 
-    p = subprocess.Popen(['git', 'describe', '--always'], cwd=_SCAPY_PKG_DIR,
-                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-    out, err = p.communicate()
-
-    if p.returncode == 0:
-        tag = out.decode().strip()
-        match = re.match('^v?(.+?)-(\\d+)-g[a-f0-9]+$', tag)
-        if match:
-            # remove the 'v' prefix and add a '.devN' suffix
-            return '%s.dev%s' % (match.group(1), match.group(2))
+    def _git(cmd):
+        process = subprocess.Popen(
+            cmd.split(),
+            cwd=_SCAPY_PKG_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        out, err = process.communicate()
+        if process.returncode == 0:
+            return out.decode().strip()
         else:
-            # just remove the 'v' prefix
-            return re.sub('^v', '', tag)
+            raise subprocess.CalledProcessError(process.returncode, err)
+
+    tag = _git("git describe --always")
+    if not tag.startswith("v"):
+        # Upstream was not fetched
+        commit = _git("git rev-list --tags --max-count=1")
+        tag = _git("git describe --tags --always --long %s" % commit)
+    match = re.match('^v?(.+?)-(\\d+)-g[a-f0-9]+$', tag)
+    if match:
+        # remove the 'v' prefix and add a '.devN' suffix
+        return '%s.dev%s' % (match.group(1), match.group(2))
     else:
-        raise subprocess.CalledProcessError(p.returncode, err)
+        # just remove the 'v' prefix
+        return re.sub('^v', '', tag)
+
 
 def _version():
+    # type: () -> str
+    """Returns the Scapy version from multiple methods
+
+    :return: the Scapy version
+    """
     version_file = os.path.join(_SCAPY_PKG_DIR, 'VERSION')
     try:
         tag = _version_from_git_describe()
         # successfully read the tag from git, write it in VERSION for
         # installation and/or archive generation.
-        with open(version_file, 'w') as f:
-            f.write(tag)
+        with open(version_file, 'w') as fdesc:
+            fdesc.write(tag)
         return tag
-    except:
+    except Exception:
         # failed to read the tag from git, try to read it from a VERSION file
         try:
-            with open(version_file, 'r') as f:
-                tag = f.read()
+            with open(version_file, 'r') as fdsec:
+                tag = fdsec.read()
             return tag
-        except:
+        except Exception:
             # Rely on git archive "export-subst" git attribute.
             # See 'man gitattributes' for more details.
-            git_archive_id = 'ae348f861  (tag: v2.4.0)'
+            git_archive_id = '95ba5b8504  (tag: v2.4.4)'
             sha1 = git_archive_id.strip().split()[0]
             match = re.search('tag:(\\S+)', git_archive_id)
             if match:
@@ -86,7 +108,11 @@ def _version():
             else:
                 return 'unknown.version'
 
-VERSION = _version()
+
+VERSION = __version__ = _version()
+
+_tmp = re.search(r"[0-9.]+", VERSION)
+VERSION_MAIN = _tmp.group() if _tmp is not None else VERSION
 
 if __name__ == "__main__":
     from scapy.main import interact

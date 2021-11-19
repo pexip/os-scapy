@@ -1,6 +1,6 @@
 % Regression tests for Scapy Answering Machines
 
-# More informations at http://www.secdev.org/projects/UTscapy/
+# More information at http://www.secdev.org/projects/UTscapy/
 
 
 ############
@@ -25,7 +25,7 @@ def check_BOOTP_am_reply(packet):
     assert(packet[BOOTP].yiaddr == "192.168.1.128" and packet[BOOTP].giaddr == "192.168.1.1")
 
 test_am(BOOTP_am,
-        IP()/UDP()/BOOTP(op=1),
+        Ether()/IP()/UDP()/BOOTP(op=1),
         check_BOOTP_am_reply)
 
 
@@ -35,7 +35,7 @@ def check_DHCP_am_reply(packet):
     assert(("domain", "localnet") in packet[DHCP].options)
 
 test_am(DHCP_am,
-        IP()/UDP()/BOOTP(op=1)/DHCP(),
+        Ether()/IP()/UDP()/BOOTP(op=1)/DHCP(),
         check_DHCP_am_reply)
 
 
@@ -54,7 +54,7 @@ test_am(ARP_am,
 = DNS_am
 def check_DNS_am_reply(packet):
     assert(DNS in packet and packet[DNS].ancount == 1)
-    assert(packet[DNS].an.rdata == b"192.168.1.1")
+    assert(packet[DNS].an.rdata == "192.168.1.1")
 
 test_am(DNS_am,
         IP()/UDP()/DNS(qd=DNSQR(qname="www.secdev.org")),
@@ -66,7 +66,7 @@ a = DHCPv6_am()
 a.usage()
 
 a.parse_options(dns="2001:500::1035", domain="localdomain, local", duid=None,
-        iface=conf.iface6, advpref=255, sntpservers=None, 
+        iface=conf.iface, advpref=255, sntpservers=None,
         sipdomains=None, sipservers=None, 
         nisdomain=None, nisservers=None, 
         nispdomain=None, nispservers=None,

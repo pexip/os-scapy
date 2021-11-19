@@ -14,9 +14,9 @@
 
 # Copyright (C) 2017 Francois Contat <francois.contat@ssi.gouv.fr>
 
-# Based on tacacs+ v6 draft https://tools.ietf.org/html/draft-ietf-opsawg-tacacs-06
+# Based on tacacs+ v6 draft https://tools.ietf.org/html/draft-ietf-opsawg-tacacs-06  # noqa: E501
 
-# scapy.contrib.description = TACACS+ Protocol
+# scapy.contrib.description = Terminal Access Controller Access-Control System+
 # scapy.contrib.status = loads
 
 import struct
@@ -33,8 +33,8 @@ from scapy.modules.six.moves import range
 
 SECRET = 'test'
 
-def obfuscate(pay, secret, session_id, version, seq):
 
+def obfuscate(pay, secret, session_id, version, seq):
     '''
 
     Obfuscation methodology from section 3.7
@@ -62,58 +62,59 @@ def obfuscate(pay, secret, session_id, version, seq):
 
     return b"".join(chb(orb(pad[i]) ^ orb(pay[i])) for i in range(len(pay)))
 
-TACACSPRIVLEVEL = {15:'Root',
-                   1:'User',
-                   0:'Minimum'}
+
+TACACSPRIVLEVEL = {15: 'Root',
+                   1: 'User',
+                   0: 'Minimum'}
 
 ##########################
 # Authentication Packets #
 ##########################
 
-TACACSVERSION = {1:'Tacacs',
-                 192:'Tacacs+'}
+TACACSVERSION = {1: 'Tacacs',
+                 192: 'Tacacs+'}
 
-TACACSTYPE = {1:'Authentication',
-              2:'Authorization',
-              3:'Accounting'}
+TACACSTYPE = {1: 'Authentication',
+              2: 'Authorization',
+              3: 'Accounting'}
 
-TACACSFLAGS = {1:'Unencrypted',
-               4:'Single Connection'}
+TACACSFLAGS = {1: 'Unencrypted',
+               4: 'Single Connection'}
 
-TACACSAUTHENACTION = {1:'Login',
-                      2:'Change Pass',
-                      4:'Send Authentication'}
+TACACSAUTHENACTION = {1: 'Login',
+                      2: 'Change Pass',
+                      4: 'Send Authentication'}
 
-TACACSAUTHENTYPE = {1:'ASCII',
-                    2:'PAP',
-                    3:'CHAP',
-                    4:'ARAP', #Deprecated
-                    5:'MSCHAP',
-                    6:'MSCHAPv2'}
+TACACSAUTHENTYPE = {1: 'ASCII',
+                    2: 'PAP',
+                    3: 'CHAP',
+                    4: 'ARAP',  # Deprecated
+                    5: 'MSCHAP',
+                    6: 'MSCHAPv2'}
 
-TACACSAUTHENSERVICE = {0:'None',
-                       1:'Login',
-                       2:'Enable',
-                       3:'PPP',
-                       4:'ARAP',
-                       5:'PT',
-                       6:'RCMD',
-                       7:'X25',
-                       8:'NASI',
-                       9:'FwProxy'}
+TACACSAUTHENSERVICE = {0: 'None',
+                       1: 'Login',
+                       2: 'Enable',
+                       3: 'PPP',
+                       4: 'ARAP',
+                       5: 'PT',
+                       6: 'RCMD',
+                       7: 'X25',
+                       8: 'NASI',
+                       9: 'FwProxy'}
 
-TACACSREPLYPASS = {1:'PASS',
-                   2:'FAIL',
-                   3:'GETDATA',
-                   4:'GETUSER',
-                   5:'GETPASS',
-                   6:'RESTART',
-                   7:'ERROR',
-                   21:'FOLLOW'}
+TACACSREPLYPASS = {1: 'PASS',
+                   2: 'FAIL',
+                   3: 'GETDATA',
+                   4: 'GETUSER',
+                   5: 'GETPASS',
+                   6: 'RESTART',
+                   7: 'ERROR',
+                   21: 'FOLLOW'}
 
-TACACSREPLYFLAGS = {1:'NOECHO'}
+TACACSREPLYFLAGS = {1: 'NOECHO'}
 
-TACACSCONTINUEFLAGS = {1:'ABORT'}
+TACACSCONTINUEFLAGS = {1: 'ABORT'}
 
 
 class TacacsAuthenticationStart(Packet):
@@ -132,13 +133,14 @@ class TacacsAuthenticationStart(Packet):
                    ByteEnumField('authen_service', 1, TACACSAUTHENSERVICE),
                    FieldLenField('user_len', None, fmt='!B', length_of='user'),
                    FieldLenField('port_len', None, fmt='!B', length_of='port'),
-                   FieldLenField('rem_addr_len', None, fmt='!B', length_of='rem_addr'),
+                   FieldLenField('rem_addr_len', None, fmt='!B', length_of='rem_addr'),  # noqa: E501
                    FieldLenField('data_len', None, fmt='!B', length_of='data'),
-                   ConditionalField(StrLenField('user', '', length_from=lambda x: x.user_len),
+                   ConditionalField(StrLenField('user', '', length_from=lambda x: x.user_len),  # noqa: E501
                                     lambda x: x != ''),
                    StrLenField('port', '', length_from=lambda x: x.port_len),
-                   StrLenField('rem_addr', '', length_from=lambda x: x.rem_addr_len),
+                   StrLenField('rem_addr', '', length_from=lambda x: x.rem_addr_len),  # noqa: E501
                    StrLenField('data', '', length_from=lambda x: x.data_len)]
+
 
 class TacacsAuthenticationReply(Packet):
 
@@ -152,10 +154,11 @@ class TacacsAuthenticationReply(Packet):
     name = 'Tacacs Authentication Reply Body'
     fields_desc = [ByteEnumField('status', 1, TACACSREPLYPASS),
                    ByteEnumField('flags', 0, TACACSREPLYFLAGS),
-                   FieldLenField('server_msg_len', None, fmt='!H', length_of='server_msg'),
+                   FieldLenField('server_msg_len', None, fmt='!H', length_of='server_msg'),  # noqa: E501
                    FieldLenField('data_len', None, fmt='!H', length_of='data'),
-                   StrLenField('server_msg', '', length_from=lambda x: x.server_msg_len),
+                   StrLenField('server_msg', '', length_from=lambda x: x.server_msg_len),  # noqa: E501
                    StrLenField('data', '', length_from=lambda x: x.data_len)]
+
 
 class TacacsAuthenticationContinue(Packet):
 
@@ -167,33 +170,35 @@ class TacacsAuthenticationContinue(Packet):
     '''
 
     name = 'Tacacs Authentication Continue Body'
-    fields_desc = [FieldLenField('user_msg_len', None, fmt='!H', length_of='user_msg'),
+    fields_desc = [FieldLenField('user_msg_len', None, fmt='!H', length_of='user_msg'),  # noqa: E501
                    FieldLenField('data_len', None, fmt='!H', length_of='data'),
                    ByteEnumField('flags', 1, TACACSCONTINUEFLAGS),
-                   StrLenField('user_msg', '', length_from=lambda x: x.user_msg_len),
+                   StrLenField('user_msg', '', length_from=lambda x: x.user_msg_len),  # noqa: E501
                    StrLenField('data', '', length_from=lambda x: x.data_len)]
 
 #########################
 # Authorization Packets #
 #########################
 
-TACACSAUTHORTYPE = {0:'Not Set',
-                    1:'None',
-                    2:'Kerberos 5',
-                    3:'Line',
-                    4:'Enable',
-                    5:'Local',
-                    6:'Tacacs+',
-                    8:'Guest',
-                    16:'Radius',
-                    17:'Kerberos 4',
-                    32:'RCMD'}
 
-TACACSAUTHORSTATUS = {1:'Pass Add',
-                      2:'Pass repl',
-                      16:'Fail',
-                      17:'Error',
-                      33:'Follow'}
+TACACSAUTHORTYPE = {0: 'Not Set',
+                    1: 'None',
+                    2: 'Kerberos 5',
+                    3: 'Line',
+                    4: 'Enable',
+                    5: 'Local',
+                    6: 'Tacacs+',
+                    8: 'Guest',
+                    16: 'Radius',
+                    17: 'Kerberos 4',
+                    32: 'RCMD'}
+
+TACACSAUTHORSTATUS = {1: 'Pass Add',
+                      2: 'Pass repl',
+                      16: 'Fail',
+                      17: 'Error',
+                      33: 'Follow'}
+
 
 class TacacsAuthorizationRequest(Packet):
 
@@ -211,18 +216,19 @@ class TacacsAuthorizationRequest(Packet):
                    ByteEnumField('authen_service', 1, TACACSAUTHENSERVICE),
                    FieldLenField('user_len', None, fmt='!B', length_of='user'),
                    FieldLenField('port_len', None, fmt='!B', length_of='port'),
-                   FieldLenField('rem_addr_len', None, fmt='!B', length_of='rem_addr'),
-                   FieldLenField('arg_cnt', None, fmt='!B', count_of='arg_len_list'),
+                   FieldLenField('rem_addr_len', None, fmt='!B', length_of='rem_addr'),  # noqa: E501
+                   FieldLenField('arg_cnt', None, fmt='!B', count_of='arg_len_list'),  # noqa: E501
                    FieldListField('arg_len_list', [], ByteField('', 0),
                                   length_from=lambda pkt: pkt.arg_cnt),
                    StrLenField('user', '', length_from=lambda x: x.user_len),
                    StrLenField('port', '', length_from=lambda x: x.port_len),
-                   StrLenField('rem_addr', '', length_from=lambda x: x.rem_addr_len)]
+                   StrLenField('rem_addr', '', length_from=lambda x: x.rem_addr_len)]  # noqa: E501
 
     def guess_payload_class(self, pay):
         if self.arg_cnt > 0:
             return TacacsPacketArguments
         return conf.padding_layer
+
 
 class TacacsAuthorizationReply(Packet):
 
@@ -235,12 +241,12 @@ class TacacsAuthorizationReply(Packet):
 
     name = 'Tacacs Authorization Reply Body'
     fields_desc = [ByteEnumField('status', 0, TACACSAUTHORSTATUS),
-                   FieldLenField('arg_cnt', None, fmt='!B', count_of='arg_len_list'),
-                   FieldLenField('server_msg_len', None, fmt='!H', length_of='server_msg'),
+                   FieldLenField('arg_cnt', None, fmt='!B', count_of='arg_len_list'),  # noqa: E501
+                   FieldLenField('server_msg_len', None, fmt='!H', length_of='server_msg'),  # noqa: E501
                    FieldLenField('data_len', None, fmt='!H', length_of='data'),
                    FieldListField('arg_len_list', [], ByteField('', 0),
                                   length_from=lambda pkt: pkt.arg_cnt),
-                   StrLenField('server_msg', '', length_from=lambda x: x.server_msg_len),
+                   StrLenField('server_msg', '', length_from=lambda x: x.server_msg_len),  # noqa: E501
                    StrLenField('data', '', length_from=lambda x: x.data_len)]
 
     def guess_payload_class(self, pay):
@@ -253,13 +259,14 @@ class TacacsAuthorizationReply(Packet):
 # Accounting Packets #
 ######################
 
-TACACSACNTFLAGS = {2:'Start',
-                   4:'Stop',
-                   8:'Watchdog'}
+TACACSACNTFLAGS = {2: 'Start',
+                   4: 'Stop',
+                   8: 'Watchdog'}
 
-TACACSACNTSTATUS = {1:'Success',
-                    2:'Error',
-                    33:'Follow'}
+TACACSACNTSTATUS = {1: 'Success',
+                    2: 'Error',
+                    33: 'Follow'}
+
 
 class TacacsAccountingRequest(Packet):
 
@@ -278,18 +285,19 @@ class TacacsAccountingRequest(Packet):
                    ByteEnumField('authen_service', 1, TACACSAUTHENSERVICE),
                    FieldLenField('user_len', None, fmt='!B', length_of='user'),
                    FieldLenField('port_len', None, fmt='!B', length_of='port'),
-                   FieldLenField('rem_addr_len', None, fmt='!B', length_of='rem_addr'),
-                   FieldLenField('arg_cnt', None, fmt='!B', count_of='arg_len_list'),
+                   FieldLenField('rem_addr_len', None, fmt='!B', length_of='rem_addr'),  # noqa: E501
+                   FieldLenField('arg_cnt', None, fmt='!B', count_of='arg_len_list'),  # noqa: E501
                    FieldListField('arg_len_list', [], ByteField('', 0),
                                   length_from=lambda pkt: pkt.arg_cnt),
                    StrLenField('user', '', length_from=lambda x: x.user_len),
                    StrLenField('port', '', length_from=lambda x: x.port_len),
-                   StrLenField('rem_addr', '', length_from=lambda x: x.rem_addr_len)]
+                   StrLenField('rem_addr', '', length_from=lambda x: x.rem_addr_len)]  # noqa: E501
 
     def guess_payload_class(self, pay):
         if self.arg_cnt > 0:
             return TacacsPacketArguments
         return conf.padding_layer
+
 
 class TacacsAccountingReply(Packet):
 
@@ -301,11 +309,12 @@ class TacacsAccountingReply(Packet):
     '''
 
     name = 'Tacacs Accounting Reply Body'
-    fields_desc = [FieldLenField('server_msg_len', None, fmt='!H', length_of='server_msg'),
+    fields_desc = [FieldLenField('server_msg_len', None, fmt='!H', length_of='server_msg'),  # noqa: E501
                    FieldLenField('data_len', None, fmt='!H', length_of='data'),
                    ByteEnumField('status', None, TACACSACNTSTATUS),
-                   StrLenField('server_msg', '', length_from=lambda x: x.server_msg_len),
+                   StrLenField('server_msg', '', length_from=lambda x: x.server_msg_len),  # noqa: E501
                    StrLenField('data', '', length_from=lambda x: x.data_len)]
+
 
 class TacacsPacketArguments(Packet):
 
@@ -341,26 +350,27 @@ class TacacsPacketArguments(Packet):
         while isinstance(cur, TacacsPacketArguments):
             cur = cur.underlayer
             i += 1
-        if i+1 < cur.arg_cnt:
+        if i + 1 < cur.arg_cnt:
             return TacacsPacketArguments
         return conf.padding_layer
-
 
 
 class TacacsClientPacket(Packet):
 
     '''
 
-    Super class for tacacs packet in order to get them uncrypted
+    Super class for tacacs packet in order to get them unencrypted
     Obfuscation methodology from section 3.7
     https://tools.ietf.org/html/draft-ietf-opsawg-tacacs-06#section-3.7
 
     '''
+
     def post_dissect(self, pay):
 
         if self.flags == 0:
-            pay = obfuscate(pay, SECRET, self.session_id, self.version, self.seq)
+            pay = obfuscate(pay, SECRET, self.session_id, self.version, self.seq)  # noqa: E501
             return pay
+
 
 class TacacsHeader(TacacsClientPacket):
 
@@ -416,10 +426,9 @@ class TacacsHeader(TacacsClientPacket):
         if self.length is None and pay:
             p = p[:-4] + struct.pack('!I', len(pay))
 
-
         if self.flags == 0:
 
-            pay = obfuscate(pay, SECRET, self.session_id, self.version, self.seq)
+            pay = obfuscate(pay, SECRET, self.session_id, self.version, self.seq)  # noqa: E501
             return p + pay
 
         return p

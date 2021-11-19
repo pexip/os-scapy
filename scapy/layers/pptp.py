@@ -1,7 +1,7 @@
-## This file is part of Scapy
-## See http://www.secdev.org/projects/scapy for more informations
-## Copyright (C) Jan Sebechlebsky <sebechlebskyjan@gmail.com>
-## This program is published under a GPLv2 license
+# This file is part of Scapy
+# See http://www.secdev.org/projects/scapy for more information
+# Copyright (C) Jan Sebechlebsky <sebechlebskyjan@gmail.com>
+# This program is published under a GPLv2 license
 
 """
 PPTP (Point to Point Tunneling Protocol)
@@ -11,10 +11,10 @@ PPTP (Point to Point Tunneling Protocol)
 
 from scapy.packet import Packet, bind_layers
 from scapy.layers.inet import TCP
-from scapy.compat import *
-from scapy.fields import ByteEnumField, FieldLenField, FlagsField, IntField, IntEnumField,\
-                         LenField, XIntField, ShortField, ShortEnumField, StrFixedLenField,\
-                         StrLenField, XShortField, XByteField
+from scapy.compat import orb
+from scapy.fields import ByteEnumField, FieldLenField, FlagsField, IntField, \
+    IntEnumField, LenField, XIntField, ShortField, ShortEnumField, \
+    StrFixedLenField, StrLenField, XShortField, XByteField
 
 _PPTP_MAGIC_COOKIE = 0x1a2b3c4d
 
@@ -22,24 +22,24 @@ _PPTP_msg_type = {1: "Control Message",
                   2: "Managemenent Message"}
 
 _PPTP_ctrl_msg_type = {  # Control Connection Management
-                       1: "Start-Control-Connection-Request",
-                       2: "Start-Control-Connection-Reply",
-                       3: "Stop-Control-Connection-Request",
-                       4: "Stop-Control-Connection-Reply",
-                       5: "Echo-Request",
-                       6: "Echo-Reply",
-                       # Call Management
-                       7: "Outgoing-Call-Request",
-                       8: "Outgoing-Call-Reply",
-                       9: "Incoming-Call-Request",
-                       10: "Incoming-Call-Reply",
-                       11: "Incoming-Call-Connected",
-                       12: "Call-Clear-Request",
-                       13: "Call-Disconnect-Notify",
-                       # Error Reporting
-                       14: "WAN-Error-Notify",
-                       # PPP Session Control
-                       15: "Set-Link-Info"}
+    1: "Start-Control-Connection-Request",
+    2: "Start-Control-Connection-Reply",
+    3: "Stop-Control-Connection-Request",
+    4: "Stop-Control-Connection-Reply",
+    5: "Echo-Request",
+    6: "Echo-Reply",
+    # Call Management
+    7: "Outgoing-Call-Request",
+    8: "Outgoing-Call-Reply",
+    9: "Incoming-Call-Request",
+    10: "Incoming-Call-Reply",
+    11: "Incoming-Call-Connected",
+    12: "Call-Clear-Request",
+    13: "Call-Disconnect-Notify",
+    # Error Reporting
+    14: "WAN-Error-Notify",
+    # PPP Session Control
+    15: "Set-Link-Info"}
 
 _PPTP_general_error_code = {0: "None",
                             1: "Not-Connected",
@@ -58,7 +58,7 @@ class PPTP(Packet):
                    XIntField("magic_cookie", _PPTP_MAGIC_COOKIE),
                    ShortEnumField("ctrl_msg_type", 1, _PPTP_ctrl_msg_type),
                    XShortField("reserved_0", 0x0000),
-                   StrLenField("data", "",length_from=lambda p: p.len - 12)]
+                   StrLenField("data", "", length_from=lambda p: p.len - 12)]
 
     registered_options = {}
 
@@ -88,7 +88,7 @@ class PPTPStartControlConnectionRequest(PPTP):
                    XIntField("magic_cookie", _PPTP_MAGIC_COOKIE),
                    ShortEnumField("ctrl_msg_type", 1, _PPTP_ctrl_msg_type),
                    XShortField("reserved_0", 0x0000),
-                   ShortField("protocol_version", 1),
+                   ShortField("protocol_version", 0x0100),
                    XShortField("reserved_1", 0x0000),
                    FlagsField("framing_capabilities", 0, 32,
                               _PPTP_FRAMING_CAPABILITIES_FLAGS),
@@ -98,6 +98,7 @@ class PPTPStartControlConnectionRequest(PPTP):
                    ShortField("firmware_revision", 256),
                    StrFixedLenField("host_name", "linux", 64),
                    StrFixedLenField("vendor_string", "", 64)]
+
 
 _PPTP_start_control_connection_result = {1: "OK",
                                          2: "General error",
@@ -113,7 +114,7 @@ class PPTPStartControlConnectionReply(PPTP):
                    XIntField("magic_cookie", _PPTP_MAGIC_COOKIE),
                    ShortEnumField("ctrl_msg_type", 2, _PPTP_ctrl_msg_type),
                    XShortField("reserved_0", 0x0000),
-                   ShortField("protocol_version", 1),
+                   ShortField("protocol_version", 0x0100),
                    ByteEnumField("result_code", 1,
                                  _PPTP_start_control_connection_result),
                    ByteEnumField("error_code", 0, _PPTP_general_error_code),
@@ -147,6 +148,7 @@ class PPTPStopControlConnectionRequest(PPTP):
                    XByteField("reserved_1", 0x00),
                    XShortField("reserved_2", 0x0000)]
 
+
 _PPTP_stop_control_connection_result = {1: "OK",
                                         2: "General error"}
 
@@ -176,6 +178,7 @@ class PPTPEchoRequest(PPTP):
                    XShortField("reserved_0", 0x0000),
                    IntField("identifier", None)]
 
+
 _PPTP_echo_result = {1: "OK",
                      2: "General error"}
 
@@ -193,7 +196,8 @@ class PPTPEchoReply(PPTP):
                    XShortField("reserved_1", 0x0000)]
 
     def answers(self, other):
-        return isinstance(other, PPTPEchoRequest) and other.identifier == self.identifier
+        return isinstance(other, PPTPEchoRequest) and other.identifier == self.identifier  # noqa: E501
+
 
 _PPTP_bearer_type = {1: "Analog channel",
                      2: "Digital channel",
@@ -224,6 +228,7 @@ class PPTPOutgoingCallRequest(PPTP):
                    StrFixedLenField("phone_number", '', 64),
                    StrFixedLenField("subaddress", '', 64)]
 
+
 _PPTP_result_code = {1: "Connected",
                      2: "General error",
                      3: "No Carrier",
@@ -251,7 +256,7 @@ class PPTPOutgoingCallReply(PPTP):
                    IntField("channel_id", 0)]
 
     def answers(self, other):
-        return isinstance(other, PPTPOutgoingCallRequest) and other.call_id == self.peer_call_id
+        return isinstance(other, PPTPOutgoingCallRequest) and other.call_id == self.peer_call_id  # noqa: E501
 
 
 class PPTPIncomingCallRequest(PPTP):
@@ -288,7 +293,7 @@ class PPTPIncomingCallReply(PPTP):
                    XShortField("reserved_1", 0x0000)]
 
     def answers(self, other):
-        return isinstance(other, PPTPIncomingCallRequest) and other.call_id == self.peer_call_id
+        return isinstance(other, PPTPIncomingCallRequest) and other.call_id == self.peer_call_id  # noqa: E501
 
 
 class PPTPIncomingCallConnected(PPTP):
@@ -306,7 +311,7 @@ class PPTPIncomingCallConnected(PPTP):
                    IntEnumField("framing_type", 1, _PPTP_framing_type)]
 
     def answers(self, other):
-        return isinstance(other, PPTPIncomingCallReply) and other.call_id == self.peer_call_id
+        return isinstance(other, PPTPIncomingCallReply) and other.call_id == self.peer_call_id  # noqa: E501
 
 
 class PPTPCallClearRequest(PPTP):
@@ -318,6 +323,7 @@ class PPTPCallClearRequest(PPTP):
                    XShortField("reserved_0", 0x0000),
                    ShortField("call_id", 1),
                    XShortField("reserved_1", 0x0000)]
+
 
 _PPTP_call_disconnect_result = {1: "Lost Carrier",
                                 2: "General error",
@@ -369,6 +375,7 @@ class PPTPSetLinkInfo(PPTP):
                    XShortField("reserved_1", 0x0000),
                    XIntField("send_accm", 0x00000000),
                    XIntField("receive_accm", 0x00000000)]
+
 
 bind_layers(TCP, PPTP, sport=1723)
 bind_layers(TCP, PPTP, dport=1723)

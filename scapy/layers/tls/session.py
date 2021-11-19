@@ -1,33 +1,36 @@
-## This file is part of Scapy
-## Copyright (C) 2007, 2008, 2009 Arnaud Ebalard
-##               2015, 2016, 2017 Maxence Tury
-## This program is published under a GPLv2 license
+# This file is part of Scapy
+# Copyright (C) 2007, 2008, 2009 Arnaud Ebalard
+#               2015, 2016, 2017 Maxence Tury
+#               2019 Romain Perez
+# This program is published under a GPLv2 license
 
 """
 TLS session handler.
 """
 
-import random
 import socket
 import struct
 
 from scapy.config import conf
-from scapy.compat import *
+from scapy.compat import raw
 import scapy.modules.six as six
 from scapy.error import log_runtime, warning
 from scapy.packet import Packet
+from scapy.pton_ntop import inet_pton
+from scapy.sessions import DefaultSession
 from scapy.utils import repr_hex, strxor
+from scapy.layers.inet import TCP
 from scapy.layers.tls.crypto.compression import Comp_NULL
 from scapy.layers.tls.crypto.hkdf import TLS13_HKDF
 from scapy.layers.tls.crypto.prf import PRF
 
 # Note the following import may happen inside connState.__init__()
-# in order to avoid to avoid cyclical dependancies.
+# in order to avoid to avoid cyclical dependencies.
 # from scapy.layers.tls.crypto.suites import TLS_NULL_WITH_NULL_NULL
 
 
 ###############################################################################
-### Connection states                                                       ###
+#   Connection states                                                         #
 ###############################################################################
 
 class connState(object):
@@ -63,6 +66,7 @@ class connState(object):
     is encrypted and signed according to a new cipher suite, even though
     it cannot decipher the message nor verify its integrity.
     """
+
     def __init__(self,
                  connection_end="server",
                  read_or_write="read",
@@ -87,7 +91,7 @@ class connState(object):
         self.ciphersuite = ciphersuite(tls_version=tls_version)
 
         if not self.ciphersuite.usable:
-            warning("TLS ciphersuite not useable. Is the cryptography Python module installed ?")
+            warning("TLS ciphersuite not usable. Is the cryptography Python module installed ?")  # noqa: E501
             return
 
         self.compression = compression_alg()
@@ -111,7 +115,6 @@ class connState(object):
         else:
             self.prf = PRF(ciphersuite.hash_alg.name, tls_version)
 
-
     def debug_repr(self, name, secret):
         if conf.debug_tls and secret:
             log_runtime.debug("TLS: %s %s %s: %s",
@@ -124,7 +127,7 @@ class connState(object):
                     client_random=b"",
                     server_random=b"",
                     master_secret=b""):
-        #XXX Can this be called over a non-usable suite? What happens then?
+        # XXX Can this be called over a non-usable suite? What happens then?
 
         cs = self.ciphersuite
 
@@ -137,13 +140,13 @@ class connState(object):
         # When slicing the key_block, keep the right half of the material
         skip_first = False
         if ((self.connection_end == "client" and self.row == "read") or
-            (self.connection_end == "server" and self.row == "write")):
+                (self.connection_end == "server" and self.row == "write")):
             skip_first = True
 
         pos = 0
         cipher_alg = cs.cipher_alg
 
-        ### MAC secret (for block and stream ciphers)
+        # MAC secret (for block and stream ciphers)
         if (cipher_alg.type == "stream") or (cipher_alg.type == "block"):
             start = pos
             if skip_first:
@@ -151,11 +154,11 @@ class connState(object):
             end = start + cs.hmac_alg.key_len
             mac_secret = key_block[start:end]
             self.debug_repr("mac_secret", mac_secret)
-            pos += 2*cs.hmac_alg.key_len
+            pos += 2 * cs.hmac_alg.key_len
         else:
             mac_secret = None
 
-        ### Cipher secret
+        # Cipher secret
         start = pos
         if skip_first:
             start += cipher_alg.key_len
@@ -164,15 +167,15 @@ class connState(object):
         if cs.kx_alg.export:
             reqLen = cipher_alg.expanded_key_len
             cipher_secret = self.prf.postprocess_key_for_export(cipher_secret,
-                                                      client_random,
-                                                      server_random,
-                                                      self.connection_end,
-                                                      self.row,
-                                                      reqLen)
+                                                                client_random,
+                                                                server_random,
+                                                                self.connection_end,  # noqa: E501
+                                                                self.row,
+                                                                reqLen)
         self.debug_repr("cipher_secret", cipher_secret)
-        pos += 2*cipher_alg.key_len
+        pos += 2 * cipher_alg.key_len
 
-        ### Implicit IV (for block and AEAD ciphers)
+        # Implicit IV (for block and AEAD ciphers)
         start = pos
         if cipher_alg.type == "block":
             if skip_first:
@@ -183,7 +186,7 @@ class connState(object):
                 start += cipher_alg.fixed_iv_len
             end = start + cipher_alg.fixed_iv_len
 
-        ### Now we have the secrets, we can instantiate the algorithms
+        # Now we have the secrets, we can instantiate the algorithms
         if cs.hmac_alg is None:         # AEAD
             self.hmac = None
             self.mac_len = cipher_alg.tag_len
@@ -211,8 +214,8 @@ class connState(object):
             fixed_iv = key_block[start:end]
             nonce_explicit_init = 0
             # If you ever wanted to set a random nonce_explicit, use this:
-            #exp_bit_len = cipher_alg.nonce_explicit_len * 8
-            #nonce_explicit_init = random.randint(0, 2**exp_bit_len - 1)
+            # exp_bit_len = cipher_alg.nonce_explicit_len * 8
+            # nonce_explicit_init = random.randint(0, 2**exp_bit_len - 1)
             cipher = cipher_alg(cipher_secret, fixed_iv, nonce_explicit_init)
             self.debug_repr("aead fixed iv", fixed_iv)
         self.cipher = cipher
@@ -227,7 +230,7 @@ class connState(object):
         """
         skip_first = True
         if ((self.connection_end == "client" and self.row == "read") or
-            (self.connection_end == "server" and self.row == "write")):
+                (self.connection_end == "server" and self.row == "write")):
             skip_first = False
 
         cipher_alg = self.ciphersuite.cipher_alg
@@ -264,13 +267,7 @@ class connState(object):
         return snap
 
     def __repr__(self):
-        def indent(s):
-            if s and s[-1] == '\n':
-                s = s[:-1]
-            s = '\n'.join('\t' + x for x in s.split('\n')) + '\n'
-            return s
-
-        res =  "Connection end : %s\n" % self.connection_end.upper()
+        res = "Connection end : %s\n" % self.connection_end.upper()
         res += "Cipher suite   : %s (0x%04x)\n" % (self.ciphersuite.name,
                                                    self.ciphersuite.val)
         res += "Compression    : %s (0x%02x)\n" % (self.compression.name,
@@ -283,13 +280,14 @@ class readConnState(connState):
     def __init__(self, **kargs):
         connState.__init__(self, read_or_write="read", **kargs)
 
+
 class writeConnState(connState):
     def __init__(self, **kargs):
         connState.__init__(self, read_or_write="write", **kargs)
 
 
 ###############################################################################
-### TLS session                                                             ###
+#   TLS session                                                               #
 ###############################################################################
 
 class tlsSession(object):
@@ -303,6 +301,7 @@ class tlsSession(object):
     The default connection_end is "server". This corresponds to the expected
     behaviour for static exchange analysis (with a ClientHello parsed first).
     """
+
     def __init__(self,
                  ipsrc=None, ipdst=None,
                  sport=None, dport=None, sid=None,
@@ -312,7 +311,7 @@ class tlsSession(object):
         # Use this switch to prevent additions to the 'handshake_messages'.
         self.frozen = False
 
-        ### Network settings
+        # Network settings
         self.ipsrc = ipsrc
         self.ipdst = ipdst
         self.sport = sport
@@ -322,7 +321,7 @@ class tlsSession(object):
         # Our TCP socket. None until we send (or receive) a packet.
         self.sock = None
 
-        ### Connection states
+        # Connection states
         self.connection_end = connection_end
 
         if wcs is None:
@@ -348,8 +347,7 @@ class tlsSession(object):
         self.prcs = None
         self.triggered_prcs_commit = False
 
-
-        ### Certificates and private keys
+        # Certificates and private keys
 
         # The server certificate chain, as a list of Cert instances.
         # Either we act as server and it has to be provided, or it is expected
@@ -365,7 +363,7 @@ class tlsSession(object):
         # authentication, while server_rsa_key is used only for RSAkx.)
         self.server_key = None
         self.server_rsa_key = None
-        #self.server_ecdsa_key = None
+        # self.server_ecdsa_key = None
 
         # Back in the dreadful EXPORT days, US servers were forbidden to use
         # RSA keys longer than 512 bits for RSAkx. When their usual RSA key
@@ -380,8 +378,7 @@ class tlsSession(object):
         self.client_certs = []
         self.client_key = None
 
-
-        ### Ephemeral key exchange parameters
+        # Ephemeral key exchange parameters
 
         # These are the group/curve parameters, needed to hold the information
         # e.g. from receiving an SKE to sending a CKE. Usually, only one of
@@ -408,8 +405,7 @@ class tlsSession(object):
         self.tls13_server_privshare = {}
         self.tls13_server_pubshare = {}
 
-
-        ### Negotiated session parameters
+        # Negotiated session parameters
 
         # The advertised TLS version found in the ClientHello (and
         # EncryptedPreMasterSecret if used). If acting as server, it is set to
@@ -420,11 +416,14 @@ class tlsSession(object):
         # The agreed-upon TLS version found in the ServerHello.
         self.tls_version = None
 
-        # These attributes should eventually be known to both sides (SSLv3-TLS 1.2).
+        # These attributes should eventually be known to both sides (SSLv3-TLS 1.2).  # noqa: E501
         self.client_random = None
         self.server_random = None
         self.pre_master_secret = None
         self.master_secret = None
+
+        # The agreed-upon signature algorithm (for TLS 1.2-TLS 1.3 only)
+        self.selected_sig_alg = None
 
         # A session ticket received by the client.
         self.client_session_ticket = None
@@ -444,6 +443,10 @@ class tlsSession(object):
         self.tls13_handshake_secret = None
         self.tls13_master_secret = None
         self.tls13_derived_secrets = {}
+        self.post_handshake_auth = False
+        self.tls13_ticket_ciphersuite = None
+        self.tls13_retry = False
+        self.middlebox_compatibility = False
 
         # Handshake messages needed for Finished computation/validation.
         # No record layer headers, no HelloRequests, no ChangeCipherSpecs.
@@ -451,9 +454,8 @@ class tlsSession(object):
         self.handshake_messages_parsed = []
 
         # All exchanged TLS packets.
-        #XXX no support for now
-        #self.exchanged_pkts = []
-
+        # XXX no support for now
+        # self.exchanged_pkts = []
 
     def __setattr__(self, name, val):
         if name == "connection_end":
@@ -467,8 +469,7 @@ class tlsSession(object):
                 self.pwcs.connection_end = val
         super(tlsSession, self).__setattr__(name, val)
 
-
-    ### Mirroring
+    # Mirroring
 
     def mirror(self):
         """
@@ -507,7 +508,7 @@ class tlsSession(object):
             self.pwcs.row = "write"
 
         self.triggered_prcs_commit, self.triggered_pwcs_commit = \
-                self.triggered_pwcs_commit, self.triggered_prcs_commit
+            self.triggered_pwcs_commit, self.triggered_prcs_commit
 
         if self.connection_end == "client":
             self.connection_end = "server"
@@ -516,8 +517,7 @@ class tlsSession(object):
 
         return self
 
-
-    ### Secrets management for SSLv3 to TLS 1.2
+    # Secrets management for SSLv3 to TLS 1.2
 
     def compute_master_secret(self):
         if self.pre_master_secret is None:
@@ -543,8 +543,7 @@ class tlsSession(object):
                               server_random=self.server_random,
                               master_secret=self.master_secret)
 
-
-    ### Secrets management for SSLv2
+    # Secrets management for SSLv2
 
     def compute_sslv2_key_material(self):
         if self.master_secret is None:
@@ -557,10 +556,10 @@ class tlsSession(object):
         km = self.pwcs.prf.derive_key_block(self.master_secret,
                                             self.sslv2_challenge,
                                             self.sslv2_connection_id,
-                                            2*self.pwcs.cipher.key_len)
+                                            2 * self.pwcs.cipher.key_len)
         self.sslv2_key_material = km
         if conf.debug_tls:
-            log_runtime.debug("TLS: master secret: %s", repr_hex(self.master_secret))
+            log_runtime.debug("TLS: master secret: %s", repr_hex(self.master_secret))  # noqa: E501
             log_runtime.debug("TLS: key material: %s", repr_hex(km))
 
     def compute_sslv2_km_and_derive_keys(self):
@@ -568,109 +567,137 @@ class tlsSession(object):
         self.prcs.sslv2_derive_keys(key_material=self.sslv2_key_material)
         self.pwcs.sslv2_derive_keys(key_material=self.sslv2_key_material)
 
+    # Secrets management for TLS 1.3
 
-    ### Secrets management for TLS 1.3
-
-    def compute_tls13_early_secrets(self):
+    def compute_tls13_early_secrets(self, external=False):
         """
+        This function computes the Early Secret, the binder_key,
+        the client_early_traffic_secret and the
+        early_exporter_master_secret (See RFC8446, section 7.1).
+
+        The parameter external is used for the computation of the
+        binder_key:
+
+        - For external PSK provisioned outside out of TLS, the parameter
+          external must be True.
+        - For resumption PSK, the parameter external must be False.
+
+        If no argument is specified, the label "res binder" will be
+        used by default.
+
         Ciphers key and IV are updated accordingly for 0-RTT data.
         self.handshake_messages should be ClientHello only.
         """
-        # we use the prcs rather than the pwcs in a totally arbitrary way
-        if self.prcs is None:
-            # too soon
-            return
 
-        hkdf = self.prcs.hkdf
+        # if no hash algorithm is set, default to SHA-256
+        if self.prcs and self.prcs.hkdf:
+            hkdf = self.prcs.hkdf
+        elif self.pwcs and self.pwcs.hkdf:
+            hkdf = self.pwcs.hkdf
+        else:
+            hkdf = TLS13_HKDF("sha256")
 
-        self.tls13_early_secret = hkdf.extract(None,
-                                               self.tls13_psk_secret)
+        if self.tls13_early_secret is None:
+            self.tls13_early_secret = hkdf.extract(None,
+                                                   self.tls13_psk_secret)
 
-        bk = hkdf.derive_secret(self.tls13_early_secret,
-                                b"external psk binder key",
-                               #"resumption psk binder key",
-                                b"")
-        self.tls13_derived_secrets["binder_key"] = bk
+        if "binder_key" not in self.tls13_derived_secrets:
+            if external:
+                bk = hkdf.derive_secret(self.tls13_early_secret,
+                                        b"ext binder",
+                                        b"")
+            else:
+                bk = hkdf.derive_secret(self.tls13_early_secret,
+                                        b"res binder",
+                                        b"")
 
-        if len(self.handshake_messages) > 1:
-            # these secrets are not defined in case of HRR
-            return
+            self.tls13_derived_secrets["binder_key"] = bk
 
         cets = hkdf.derive_secret(self.tls13_early_secret,
-                                  b"client early traffic secret",
+                                  b"c e traffic",
                                   b"".join(self.handshake_messages))
-        self.tls13_derived_secrets["client_early_traffic_secret"] = cets
 
+        self.tls13_derived_secrets["client_early_traffic_secret"] = cets
         ees = hkdf.derive_secret(self.tls13_early_secret,
-                                 b"early exporter master secret",
+                                 b"e exp master",
                                  b"".join(self.handshake_messages))
         self.tls13_derived_secrets["early_exporter_secret"] = ees
 
         if self.connection_end == "server":
-            self.prcs.tls13_derive_keys(cets)
+            if self.prcs:
+                self.prcs.tls13_derive_keys(cets)
         elif self.connection_end == "client":
-            self.pwcs.tls13_derive_keys(cets)
+            if self.pwcs:
+                self.pwcs.tls13_derive_keys(cets)
 
     def compute_tls13_handshake_secrets(self):
         """
         Ciphers key and IV are updated accordingly for Handshake data.
         self.handshake_messages should be ClientHello...ServerHello.
         """
+        if self.prcs:
+            hkdf = self.prcs.hkdf
+        elif self.pwcs:
+            hkdf = self.pwcs.hkdf
+        else:
+            warning("No HKDF. This is abnormal.")
+            return
+
         if self.tls13_early_secret is None:
-            warning("No early secret. This is abnormal.")
+            self.tls13_early_secret = hkdf.extract(None,
+                                                   self.tls13_psk_secret)
 
-        hkdf = self.prcs.hkdf
-
-        self.tls13_handshake_secret = hkdf.extract(self.tls13_early_secret,
-                                                   self.tls13_dhe_secret)
+        secret = hkdf.derive_secret(self.tls13_early_secret, b"derived", b"")
+        self.tls13_handshake_secret = hkdf.extract(secret, self.tls13_dhe_secret)  # noqa: E501
 
         chts = hkdf.derive_secret(self.tls13_handshake_secret,
-                                  b"client handshake traffic secret",
+                                  b"c hs traffic",
                                   b"".join(self.handshake_messages))
         self.tls13_derived_secrets["client_handshake_traffic_secret"] = chts
 
         shts = hkdf.derive_secret(self.tls13_handshake_secret,
-                                  b"server handshake traffic secret",
+                                  b"s hs traffic",
                                   b"".join(self.handshake_messages))
         self.tls13_derived_secrets["server_handshake_traffic_secret"] = shts
-
-        if self.connection_end == "server":
-            self.prcs.tls13_derive_keys(chts)
-            self.pwcs.tls13_derive_keys(shts)
-        elif self.connection_end == "client":
-            self.pwcs.tls13_derive_keys(chts)
-            self.prcs.tls13_derive_keys(shts)
 
     def compute_tls13_traffic_secrets(self):
         """
         Ciphers key and IV are updated accordingly for Application data.
         self.handshake_messages should be ClientHello...ServerFinished.
         """
-        hkdf = self.prcs.hkdf
+        if self.prcs and self.prcs.hkdf:
+            hkdf = self.prcs.hkdf
+        elif self.pwcs and self.pwcs.hkdf:
+            hkdf = self.pwcs.hkdf
+        else:
+            warning("No HKDF. This is abnormal.")
+            return
 
-        self.tls13_master_secret = hkdf.extract(self.tls13_handshake_secret,
-                                                None)
+        tmp = hkdf.derive_secret(self.tls13_handshake_secret,
+                                 b"derived",
+                                 b"")
+        self.tls13_master_secret = hkdf.extract(tmp, None)
 
         cts0 = hkdf.derive_secret(self.tls13_master_secret,
-                                  b"client application traffic secret",
+                                  b"c ap traffic",
                                   b"".join(self.handshake_messages))
         self.tls13_derived_secrets["client_traffic_secrets"] = [cts0]
 
         sts0 = hkdf.derive_secret(self.tls13_master_secret,
-                                  b"server application traffic secret",
+                                  b"s ap traffic",
                                   b"".join(self.handshake_messages))
         self.tls13_derived_secrets["server_traffic_secrets"] = [sts0]
 
         es = hkdf.derive_secret(self.tls13_master_secret,
-                                b"exporter master secret",
+                                b"exp master",
                                 b"".join(self.handshake_messages))
         self.tls13_derived_secrets["exporter_secret"] = es
 
         if self.connection_end == "server":
-            #self.prcs.tls13_derive_keys(cts0)
+            # self.prcs.tls13_derive_keys(cts0)
             self.pwcs.tls13_derive_keys(sts0)
         elif self.connection_end == "client":
-            #self.pwcs.tls13_derive_keys(cts0)
+            # self.pwcs.tls13_derive_keys(cts0)
             self.prcs.tls13_derive_keys(sts0)
 
     def compute_tls13_traffic_secrets_end(self):
@@ -699,7 +726,7 @@ class tlsSession(object):
         if not hkdf or not basekey:
             warning("Missing arguments for verify_data computation!")
             return None
-        #XXX this join() works in standard cases, but does it in all of them?
+        # XXX this join() works in standard cases, but does it in all of them?
         handshake_context = b"".join(self.handshake_messages)
         return hkdf.compute_verify_data(basekey, handshake_context)
 
@@ -712,35 +739,52 @@ class tlsSession(object):
         elif self.connection_end == "client":
             hkdf = self.pwcs.hkdf
         rs = hkdf.derive_secret(self.tls13_master_secret,
-                                b"resumption master secret",
+                                b"res master",
                                 b"".join(self.handshake_messages))
         self.tls13_derived_secrets["resumption_secret"] = rs
 
-    def compute_tls13_next_traffic_secrets(self):
+    def compute_tls13_next_traffic_secrets(self, connection_end, read_or_write):  # noqa : E501
         """
         Ciphers key and IV are updated accordingly.
         """
-        hkdf = self.prcs.hkdf
-        hl = hkdf.hash.digest_size
+        if self.rcs.hkdf:
+            hkdf = self.rcs.hkdf
+            hl = hkdf.hash.digest_size
+        elif self.wcs.hkdf:
+            hkdf = self.wcs.hkdf
+            hl = hkdf.hash.digest_size
 
-        cts = self.tls13_derived_secrets["client_traffic_secrets"]
-        ctsN = cts[-1]
-        ctsN_1 = hkdf.expand_label(ctsN, "application traffic secret", "", hl)
-        cts.append(ctsN_1)
+        if read_or_write == "read":
+            if connection_end == "client":
+                cts = self.tls13_derived_secrets["client_traffic_secrets"]
+                ctsN = cts[-1]
+                ctsN_1 = hkdf.expand_label(ctsN, b"traffic upd", b"", hl)
+                cts.append(ctsN_1)
+                self.prcs.tls13_derive_keys(ctsN_1)
+            elif connection_end == "server":
+                sts = self.tls13_derived_secrets["server_traffic_secrets"]
+                stsN = sts[-1]
+                stsN_1 = hkdf.expand_label(stsN, b"traffic upd", b"", hl)
+                sts.append(stsN_1)
 
-        sts = self.tls13_derived_secrets["server_traffic_secrets"]
-        stsN = sts[-1]
-        stsN_1 = hkdf.expand_label(ctsN, "application traffic secret", "", hl)
-        cts.append(stsN_1)
+                self.prcs.tls13_derive_keys(stsN_1)
 
-        if self.connection_end == "server":
-            self.prcs.tls13_derive_keys(ctsN_1)
-            self.pwcs.tls13_derive_keys(stsN_1)
-        elif self.connection_end == "client":
-            self.pwcs.tls13_derive_keys(ctsN_1)
-            self.prcs.tls13_derive_keys(stsN_1)
+        elif read_or_write == "write":
+            if connection_end == "client":
+                cts = self.tls13_derived_secrets["client_traffic_secrets"]
+                ctsN = cts[-1]
+                ctsN_1 = hkdf.expand_label(ctsN, b"traffic upd", b"", hl)
+                cts.append(ctsN_1)
+                self.pwcs.tls13_derive_keys(ctsN_1)
+            elif connection_end == "server":
+                sts = self.tls13_derived_secrets["server_traffic_secrets"]
+                stsN = sts[-1]
+                stsN_1 = hkdf.expand_label(stsN, b"traffic upd", b"", hl)
+                sts.append(stsN_1)
 
-    ### Tests for record building/parsing
+                self.pwcs.tls13_derive_keys(stsN_1)
+
+    # Tests for record building/parsing
 
     def consider_read_padding(self):
         # Return True if padding is needed. Used by TLSPadField.
@@ -758,8 +802,7 @@ class tlsSession(object):
             return False
         return version >= 0x0302
 
-
-    ### Python object management
+    # Python object management
 
     def hash(self):
         s1 = struct.pack("!H", self.sport)
@@ -767,19 +810,19 @@ class tlsSession(object):
         family = socket.AF_INET
         if ':' in self.ipsrc:
             family = socket.AF_INET6
-        s1 += socket.inet_pton(family, self.ipsrc)
-        s2 += socket.inet_pton(family, self.ipdst)
+        s1 += inet_pton(family, self.ipsrc)
+        s2 += inet_pton(family, self.ipdst)
         return strxor(s1, s2)
 
     def eq(self, other):
         ok = False
         if (self.sport == other.sport and self.dport == other.dport and
-            self.ipsrc == other.ipsrc and self.ipdst == other.ipdst):
+                self.ipsrc == other.ipsrc and self.ipdst == other.ipdst):
             ok = True
 
         if (not ok and
             self.dport == other.sport and self.sport == other.dport and
-            self.ipdst == other.ipsrc and self.ipsrc == other.ipdst):
+                self.ipdst == other.ipsrc and self.ipsrc == other.ipdst):
             ok = True
 
         if ok:
@@ -797,8 +840,9 @@ class tlsSession(object):
                                   self.ipdst, str(self.dport))
 
 ###############################################################################
-### Session singleton                                                       ###
+#   Session singleton                                                         #
 ###############################################################################
+
 
 class _GenericTLSSessionInheritance(Packet):
     """
@@ -816,17 +860,44 @@ class _GenericTLSSessionInheritance(Packet):
                  _underlayer=None, tls_session=None, **fields):
         try:
             setme = self.tls_session is None
-        except:
+        except Exception:
             setme = True
 
+        newses = False
         if setme:
             if tls_session is None:
+                newses = True
                 self.tls_session = tlsSession()
             else:
                 self.tls_session = tls_session
 
         self.rcs_snap_init = self.tls_session.rcs.snapshot()
         self.wcs_snap_init = self.tls_session.wcs.snapshot()
+
+        if isinstance(_underlayer, TCP):
+            tcp = _underlayer
+            self.tls_session.sport = tcp.sport
+            self.tls_session.dport = tcp.dport
+            try:
+                self.tls_session.ipsrc = tcp.underlayer.src
+                self.tls_session.ipdst = tcp.underlayer.dst
+            except AttributeError:
+                pass
+            if conf.tls_session_enable:
+                if newses:
+                    s = conf.tls_sessions.find(self.tls_session)
+                    if s:
+                        if s.dport == self.tls_session.dport:
+                            self.tls_session = s
+                        else:
+                            self.tls_session = s.mirror()
+                    else:
+                        conf.tls_sessions.add(self.tls_session)
+            if self.tls_session.connection_end == "server":
+                srk = conf.tls_sessions.server_rsa_key
+                if not self.tls_session.server_rsa_key and \
+                        srk:
+                    self.tls_session.server_rsa_key = srk
 
         Packet.__init__(self, _pkt=_pkt, post_transform=post_transform,
                         _internal=_internal, _underlayer=_underlayer,
@@ -885,6 +956,7 @@ class _GenericTLSSessionInheritance(Packet):
         rcs_snap = s.rcs.snapshot()
         wcs_snap = s.wcs.snapshot()
         rpc_snap = self.raw_packet_cache
+        rpcf_snap = self.raw_packet_cache_fields
 
         s.wcs = self.rcs_snap_init
 
@@ -897,6 +969,7 @@ class _GenericTLSSessionInheritance(Packet):
         s.rcs = rcs_snap
         s.wcs = wcs_snap
         self.raw_packet_cache = rpc_snap
+        self.raw_packet_cache_fields = rpcf_snap
 
         return built_packet
     __str__ = __bytes__
@@ -925,18 +998,38 @@ class _GenericTLSSessionInheritance(Packet):
         s.rcs = rcs_snap
         s.wcs = wcs_snap
 
-    # Uncomment this when the automata update IPs and ports properly
-    #def mysummary(self):
-    #    return "TLS %s" % repr(self.tls_session)
+    def mysummary(self):
+        return "TLS %s / %s" % (repr(self.tls_session),
+                                getattr(self, "_name", self.name))
+
+    @classmethod
+    def tcp_reassemble(cls, data, metadata):
+        # Used with TLSSession
+        from scapy.layers.tls.record import TLS
+        from scapy.layers.tls.record_tls13 import TLS13
+        if cls in (TLS, TLS13):
+            length = struct.unpack("!H", data[3:5])[0] + 5
+            if len(data) == length:
+                return cls(data)
+            elif len(data) > length:
+                pkt = cls(data)
+                if hasattr(pkt.payload, "tcp_reassemble"):
+                    if pkt.payload.tcp_reassemble(data[length:], metadata):
+                        return pkt
+                else:
+                    return pkt
+        else:
+            return cls(data)
 
 
 ###############################################################################
-### Multiple TLS sessions                                                   ###
+#   Multiple TLS sessions                                                     #
 ###############################################################################
 
 class _tls_sessions(object):
     def __init__(self):
         self.sessions = {}
+        self.server_rsa_key = None
 
     def add(self, session):
         s = self.find(session)
@@ -960,7 +1053,10 @@ class _tls_sessions(object):
         self.sessions[h].remove(session)
 
     def find(self, session):
-        h = session.hash()
+        try:
+            h = session.hash()
+        except Exception:
+            return None
         if h in self.sessions:
             for k in self.sessions[h]:
                 if k.eq(session):
@@ -973,19 +1069,33 @@ class _tls_sessions(object):
 
     def __repr__(self):
         res = [("First endpoint", "Second endpoint", "Session ID")]
-        for l in self.sessions.values():
-            for s in l:
+        for li in six.itervalues(self.sessions):
+            for s in li:
                 src = "%s[%d]" % (s.ipsrc, s.sport)
                 dst = "%s[%d]" % (s.ipdst, s.dport)
                 sid = repr(s.sid)
                 if len(sid) > 12:
                     sid = sid[:11] + "..."
                 res.append((src, dst, sid))
-        colwidth = (max([len(y) for y in x]) for x in zip(*res))
-        fmt = "  ".join(map(lambda x: "%%-%ds"%x, colwidth))
+        colwidth = (max(len(y) for y in x) for x in zip(*res))
+        fmt = "  ".join(map(lambda x: "%%-%ds" % x, colwidth))
         return "\n".join(map(lambda x: fmt % x, res))
 
 
-conf.tls_sessions = _tls_sessions()
-conf.tls_verbose = False
+class TLSSession(DefaultSession):
+    def __init__(self, *args, **kwargs):
+        server_rsa_key = kwargs.pop("server_rsa_key", None)
+        super(TLSSession, self).__init__(*args, **kwargs)
+        self._old_conf_status = conf.tls_session_enable
+        conf.tls_session_enable = True
+        if server_rsa_key:
+            conf.tls_sessions.server_rsa_key = server_rsa_key
 
+    def toPacketList(self):
+        conf.tls_session_enable = self._old_conf_status
+        return super(TLSSession, self).toPacketList()
+
+
+conf.tls_sessions = _tls_sessions()
+conf.tls_session_enable = False
+conf.tls_verbose = False

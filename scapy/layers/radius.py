@@ -1,25 +1,23 @@
-## This file is part of Scapy
-## See http://www.secdev.org/projects/scapy for more informations
-## Copyright (C) Philippe Biondi <phil@secdev.org>
-##               Vincent Mauge   <vmauge.nospam@nospam.gmail.com>
-## This program is published under a GPLv2 license
+# This file is part of Scapy
+# See http://www.secdev.org/projects/scapy for more information
+# Copyright (C) Philippe Biondi <phil@secdev.org>
+# Vincent Mauge   <vmauge.nospam@nospam.gmail.com>
+# This program is published under a GPLv2 license
 
 """
 RADIUS (Remote Authentication Dial In User Service)
 """
 
 import struct
-import logging
 import hashlib
 import hmac
-from scapy.compat import *
-from scapy.packet import Packet, bind_layers
+from scapy.compat import orb, raw
+from scapy.packet import Packet, Padding, bind_layers, bind_bottom_up
 from scapy.fields import ByteField, ByteEnumField, IntField, StrLenField,\
-    XStrLenField, XStrFixedLenField, FieldLenField, PacketField,\
+    XStrLenField, XStrFixedLenField, FieldLenField, PacketLenField,\
     PacketListField, IPField, MultiEnumField
 from scapy.layers.inet import UDP
 from scapy.layers.eap import EAP
-from scapy.utils import issubtype
 from scapy.config import conf
 from scapy.error import Scapy_Exception
 
@@ -258,25 +256,15 @@ class RadiusAttribute(Packet):
             return cls.registered_attributes.get(attr_type, cls)
         return cls
 
-    def haslayer(self, cls):
-        if cls == "RadiusAttribute":
-            if isinstance(self, RadiusAttribute):
-                return True
-        elif issubtype(cls, RadiusAttribute):
-            if isinstance(self, cls):
-                return True
-        return super(RadiusAttribute, self).haslayer(cls)
-
-    def getlayer(self, cls, nb=1, _track=None, _subclass=True, **flt):
-        return super(RadiusAttribute, self).getlayer(cls, nb=nb, _track=_track,
-                                                     _subclass=True, **flt)
-
     def post_build(self, p, pay):
         length = self.len
         if length is None:
             length = len(p)
             p = p[:1] + struct.pack("!B", length) + p[2:]
         return p
+
+    def guess_payload_class(self, _):
+        return Padding
 
 
 class _SpecificRadiusAttr(RadiusAttribute):
@@ -286,13 +274,15 @@ class _SpecificRadiusAttr(RadiusAttribute):
     """
 
     __slots__ = ["val"]
+    match_subclass = True
 
-    def __init__(self, _pkt="", post_transform=None, _internal=0, _underlayer=None, **fields):
+    def __init__(self, _pkt="", post_transform=None, _internal=0, _underlayer=None, **fields):  # noqa: E501
         super(_SpecificRadiusAttr, self).__init__(
             _pkt,
             post_transform,
             _internal,
-            _underlayer
+            _underlayer,
+            **fields
         )
         self.fields["type"] = self.val
         name_parts = self.__class__.__name__.split('RadiusAttr_')
@@ -317,6 +307,11 @@ class _RadiusAttrIntValue(_SpecificRadiusAttr):
         ByteField("len", 6),
         IntField("value", 0)
     ]
+
+
+class RadiusAttr_User_Name(_SpecificRadiusAttr):
+    """RFC 2865"""
+    val = 1
 
 
 class RadiusAttr_NAS_Port(_RadiusAttrIntValue):
@@ -496,12 +491,13 @@ class _RadiusAttrHexStringVal(_SpecificRadiusAttr):
 
     __slots__ = ["val"]
 
-    def __init__(self, _pkt="", post_transform=None, _internal=0, _underlayer=None, **fields):
+    def __init__(self, _pkt="", post_transform=None, _internal=0, _underlayer=None, **fields):  # noqa: E501
         super(_RadiusAttrHexStringVal, self).__init__(
             _pkt,
             post_transform,
             _internal,
-            _underlayer
+            _underlayer,
+            **fields
         )
         self.fields["type"] = self.val
         name_parts = self.__class__.__name__.split('RadiusAttr_')
@@ -520,14 +516,18 @@ class _RadiusAttrHexStringVal(_SpecificRadiusAttr):
             "B",
             adjust=lambda p, x: len(p.value) + 2
         ),
-        XStrLenField("value", "", length_from=lambda p: p.len - 2 if p.len else 0)
+        XStrLenField("value", "", length_from=lambda p: p.len - 2 if p.len else 0)  # noqa: E501
     ]
+
+
+class RadiusAttr_User_Password(_RadiusAttrHexStringVal):
+    """RFC 2865"""
+    val = 2
 
 
 class RadiusAttr_State(_RadiusAttrHexStringVal):
     """RFC 2865"""
     val = 24
-
 
 
 def prepare_packed_data(radius_packet, packed_req_authenticator):
@@ -566,8 +566,11 @@ class RadiusAttr_Message_Authenticator(_RadiusAttrHexStringVal):
                                       shared_secret):
         """
         Computes the "Message-Authenticator" of a given RADIUS packet.
+        (RFC 2869 - Page 33)
         """
 
+        attr = radius_packet[RadiusAttr_Message_Authenticator]
+        attr.value = bytearray(attr.len - 2)
         data = prepare_packed_data(radius_packet, packed_req_authenticator)
         radius_hmac = hmac.new(shared_secret, data, hashlib.md5)
 
@@ -577,7 +580,8 @@ class RadiusAttr_Message_Authenticator(_RadiusAttrHexStringVal):
 # RADIUS attributes which values are IPv4 prefixes
 #
 
-class _RadiusAttrIPv4AddrVal(RadiusAttribute):
+
+class _RadiusAttrIPv4AddrVal(_SpecificRadiusAttr):
     """
     Implements a RADIUS attribute which value field is an IPv4 address.
     """
@@ -795,7 +799,7 @@ _radius_attrs_values = {
         9: "X.75",
         10: "G.3 Fax",
         11: "SDSL - Symmetric DSL",
-        12: "ADSL-CAP - Asymmetric DSL, Carrierless Amplitude Phase Modulation",
+        12: "ADSL-CAP - Asymmetric DSL, Carrierless Amplitude Phase Modulation",  # noqa: E501
         13: "ADSL-DMT - Asymmetric DSL, Discrete Multi-Tone",
         14: "IDSL - ISDN Digital Subscriber Line",
         15: "Ethernet",
@@ -824,7 +828,7 @@ _radius_attrs_values = {
         38: "WIMAX-WIFI-IWK: WiMAX WIFI Interworking",
         39: "WIMAX-SFF: Signaling Forwarding Function for LTE/3GPP2",
         40: "WIMAX-HA-LMA: WiMAX HA and or LMA function",
-        41: "WIMAX-DHCP: WIMAX DCHP service",
+        41: "WIMAX-DHCP: WIMAX DHCP service",
         42: "WIMAX-LBS: WiMAX location based service",
         43: "WIMAX-WVS: WiMAX voice service"
     },
@@ -990,7 +994,7 @@ class RadiusAttr_NAS_Port_Type(_RadiusAttrIntEnumVal):
     val = 61
 
 
-class _EAPPacketField(PacketField):
+class _EAPPacketField(PacketLenField):
 
     """
     Handles EAP-Message attribute value (the actual EAP packet).
@@ -1014,6 +1018,7 @@ class RadiusAttr_EAP_Message(RadiusAttribute):
     """
 
     name = "EAP-Message"
+    match_subclass = True
     fields_desc = [
         ByteEnumField("type", 79, _radius_attribute_types),
         FieldLenField(
@@ -1023,7 +1028,7 @@ class RadiusAttr_EAP_Message(RadiusAttribute):
             "B",
             adjust=lambda pkt, x: len(pkt.value) + 2
         ),
-        _EAPPacketField("value", "", EAP)
+        _EAPPacketField("value", "", EAP, length_from=lambda p: p.len - 2)
     ]
 
 
@@ -1033,6 +1038,7 @@ class RadiusAttr_Vendor_Specific(RadiusAttribute):
     """
 
     name = "Vendor-Specific"
+    match_subclass = True
     fields_desc = [
         ByteEnumField("type", 26, _radius_attribute_types),
         FieldLenField(
@@ -1053,32 +1059,6 @@ class RadiusAttr_Vendor_Specific(RadiusAttribute):
         ),
         StrLenField("value", "", length_from=lambda p: p.vendor_len - 2)
     ]
-
-
-class _RADIUSAttrPacketListField(PacketListField):
-    """
-    PacketListField handling a list of RADIUS attributes.
-    """
-
-    def getfield(self, pkt, s):
-        lst = []
-        length = None
-        ret = ""
-
-        if self.length_from is not None:
-            length = self.length_from(pkt)
-
-        if length is not None:
-            remain, ret = s[:length], s[length:]
-
-        while remain:
-            attr_len = orb(remain[1])
-            current = remain[:attr_len]
-            remain = remain[attr_len:]
-            packet = self.m2i(pkt, current)
-            lst.append(packet)
-
-        return remain + ret, lst
 
 
 # See IANA RADIUS Packet Type Codes registry
@@ -1145,7 +1125,7 @@ class Radius(Packet):
             adjust=lambda pkt, x: len(pkt.attributes) + 20
         ),
         XStrFixedLenField("authenticator", "", 16),
-        _RADIUSAttrPacketListField(
+        PacketListField(
             "attributes",
             [],
             RadiusAttribute,
@@ -1171,7 +1151,10 @@ class Radius(Packet):
         return p
 
 
-bind_layers(UDP, Radius, sport=1812)
-bind_layers(UDP, Radius, dport=1812)
-bind_layers(UDP, Radius, sport=1813)
-bind_layers(UDP, Radius, dport=1813)
+bind_bottom_up(UDP, Radius, sport=1812)
+bind_bottom_up(UDP, Radius, dport=1812)
+bind_bottom_up(UDP, Radius, sport=1813)
+bind_bottom_up(UDP, Radius, dport=1813)
+bind_bottom_up(UDP, Radius, sport=3799)
+bind_bottom_up(UDP, Radius, dport=3799)
+bind_layers(UDP, Radius, sport=1812, dport=1812)

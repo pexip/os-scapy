@@ -1,19 +1,22 @@
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more informations
+# See http://www.secdev.org/projects/scapy for more information
 # Copyright (C) Santiago Hernandez Ramos <shramos@protonmail.com>
 # This program is published under GPLv2 license
 
+# scapy.contrib.description = Message Queuing Telemetry Transport (MQTT)
+# scapy.contrib.status = loads
 
 from scapy.packet import Packet, bind_layers
 from scapy.fields import FieldLenField, BitEnumField, StrLenField, \
-    ShortField, ConditionalField, ByteEnumField, ByteField, StrNullField
+    ShortField, ConditionalField, ByteEnumField, ByteField, PacketListField
 from scapy.layers.inet import TCP
 from scapy.error import Scapy_Exception
 from scapy.compat import orb, chb
+from scapy.volatile import RandNum
+from scapy.config import conf
 
 
 # CUSTOM FIELDS
-
 # source: http://stackoverflow.com/a/43717630
 class VariableFieldLenField(FieldLenField):
     def addfield(self, pkt, s, val):
@@ -22,16 +25,18 @@ class VariableFieldLenField(FieldLenField):
         while val:
             if val > 127:
                 data.append(val & 127)
-                val /= 127
+                val //= 128
             else:
                 data.append(val)
                 lastoffset = len(data) - 1
                 data = b"".join(chb(val | (0 if i == lastoffset else 128))
-                               for i, val in enumerate(data))
+                                for i, val in enumerate(data))
                 return s + data
             if len(data) > 3:
                 raise Scapy_Exception("%s: malformed length field" %
                                       self.__class__.__name__)
+        # If val is None / 0
+        return s + b"\x00"
 
     def getfield(self, pkt, s):
         value = 0
@@ -44,28 +49,40 @@ class VariableFieldLenField(FieldLenField):
                 raise Scapy_Exception("%s: malformed length field" %
                                       self.__class__.__name__)
 
+    def randval(self):
+        return RandVariableFieldLen()
+
+
+class RandVariableFieldLen(RandNum):
+    def __init__(self):
+        RandNum.__init__(self, 0, 268435455)
+
 
 # LAYERS
+CONTROL_PACKET_TYPE = {
+    1: 'CONNECT',
+    2: 'CONNACK',
+    3: 'PUBLISH',
+    4: 'PUBACK',
+    5: 'PUBREC',
+    6: 'PUBREL',
+    7: 'PUBCOMP',
+    8: 'SUBSCRIBE',
+    9: 'SUBACK',
+    10: 'UNSUBSCRIBE',
+    11: 'UNSUBACK',
+    12: 'PINGREQ',
+    13: 'PINGRESP',
+    14: 'DISCONNECT',
+    15: 'AUTH'  # Added in v5.0
+}
 
-CONTROL_PACKET_TYPE = {1: 'CONNECT',
-                       2: 'CONNACK',
-                       3: 'PUBLISH',
-                       4: 'PUBACK',
-                       5: 'PUBREC',
-                       6: 'PUBREL',
-                       7: 'PUBCOMP',
-                       8: 'SUBSCRIBE',
-                       9: 'SUBACK',
-                       10: 'UNSUBSCRIBE',
-                       11: 'UNSUBACK',
-                       12: 'PINGREQ',
-                       13: 'PINGRESP',
-                       14: 'DISCONNECT'}
 
-
-QOS_LEVEL = {0: 'At most once delivery',
-             1: 'At least once delivery',
-             2: 'Exactly once delivery'}
+QOS_LEVEL = {
+    0: 'At most once delivery',
+    1: 'At least once delivery',
+    2: 'Exactly once delivery'
+}
 
 
 # source: http://stackoverflow.com/a/43722441
@@ -86,13 +103,20 @@ class MQTT(Packet):
     ]
 
 
+PROTOCOL_LEVEL = {
+    3: 'v3.1',
+    4: 'v3.1.1',
+    5: 'v5.0'
+}
+
+
 class MQTTConnect(Packet):
     name = "MQTT connect"
     fields_desc = [
         FieldLenField("length", None, length_of="protoname"),
         StrLenField("protoname", "",
                     length_from=lambda pkt: pkt.length),
-        ByteField("protolevel", 0),
+        ByteEnumField("protolevel", 5, PROTOCOL_LEVEL),
         BitEnumField("usernameflag", 0, 1, {0: 'Disabled',
                                             1: 'Enabled'}),
         BitEnumField("passwordflag", 0, 1, {0: 'Disabled',
@@ -134,12 +158,14 @@ class MQTTConnect(Packet):
     ]
 
 
-RETURN_CODE = {0: 'Connection Accepted',
-               1: 'Unacceptable protocol version',
-               2: 'Identifier rejected',
-               3: 'Server unavailable',
-               4: 'Bad username/password',
-               5: 'Not authorized'}
+RETURN_CODE = {
+    0: 'Connection Accepted',
+    1: 'Unacceptable protocol version',
+    2: 'Identifier rejected',
+    3: 'Server unavailable',
+    4: 'Bad username/password',
+    5: 'Not authorized'
+}
 
 
 class MQTTConnack(Packet):
@@ -158,8 +184,8 @@ class MQTTPublish(Packet):
         StrLenField("topic", "",
                     length_from=lambda pkt: pkt.length),
         ConditionalField(ShortField("msgid", None),
-                         lambda pkt: (pkt.underlayer.QOS == 1
-                                      or pkt.underlayer.QOS == 2)),
+                         lambda pkt: (pkt.underlayer.QOS == 1 or
+                                      pkt.underlayer.QOS == 2)),
         StrLenField("value", "",
                     length_from=lambda pkt: (pkt.underlayer.len -
                                              pkt.length - 2)),
@@ -170,45 +196,59 @@ class MQTTPuback(Packet):
     name = "MQTT puback"
     fields_desc = [
         ShortField("msgid", None),
-        ]
+    ]
 
 
 class MQTTPubrec(Packet):
     name = "MQTT pubrec"
     fields_desc = [
         ShortField("msgid", None),
-        ]
+    ]
 
 
 class MQTTPubrel(Packet):
     name = "MQTT pubrel"
     fields_desc = [
         ShortField("msgid", None),
-        ]
+    ]
 
 
 class MQTTPubcomp(Packet):
     name = "MQTT pubcomp"
     fields_desc = [
         ShortField("msgid", None),
-        ]
+    ]
+
+
+class MQTTTopic(Packet):
+    name = "MQTT topic"
+    fields_desc = [
+        FieldLenField("length", None, length_of="topic"),
+        StrLenField("topic", "", length_from=lambda pkt:pkt.length)
+    ]
+
+    def guess_payload_class(self, payload):
+        return conf.padding_layer
+
+
+class MQTTTopicQOS(MQTTTopic):
+    fields_desc = MQTTTopic.fields_desc + [ByteEnumField("QOS", 0, QOS_LEVEL)]
 
 
 class MQTTSubscribe(Packet):
     name = "MQTT subscribe"
     fields_desc = [
         ShortField("msgid", None),
-        FieldLenField("length", None, length_of="topic"),
-        StrLenField("topic", "",
-                    length_from=lambda pkt: pkt.length),
-        ByteEnumField("QOS", 0, QOS_LEVEL),
-        ]
+        PacketListField("topics", [], cls=MQTTTopicQOS)
+    ]
 
 
-ALLOWED_RETURN_CODE = {0: 'Success',
-                       1: 'Success',
-                       2: 'Success',
-                       128: 'Failure'}
+ALLOWED_RETURN_CODE = {
+    0: 'Success',
+    1: 'Success',
+    2: 'Success',
+    128: 'Failure'
+}
 
 
 class MQTTSuback(Packet):
@@ -216,22 +256,22 @@ class MQTTSuback(Packet):
     fields_desc = [
         ShortField("msgid", None),
         ByteEnumField("retcode", None, ALLOWED_RETURN_CODE)
-        ]
+    ]
 
 
 class MQTTUnsubscribe(Packet):
     name = "MQTT unsubscribe"
     fields_desc = [
         ShortField("msgid", None),
-        StrNullField("payload", "")
-        ]
+        PacketListField("topics", [], cls=MQTTTopic)
+    ]
 
 
 class MQTTUnsuback(Packet):
     name = "MQTT unsuback"
     fields_desc = [
         ShortField("msgid", None)
-        ]
+    ]
 
 
 # LAYERS BINDINGS

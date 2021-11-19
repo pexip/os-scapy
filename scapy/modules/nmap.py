@@ -1,7 +1,7 @@
-## This file is part of Scapy
-## See http://www.secdev.org/projects/scapy for more informations
-## Copyright (C) Philippe Biondi <phil@secdev.org>
-## This program is published under a GPLv2 license
+# This file is part of Scapy
+# See http://www.secdev.org/projects/scapy for more information
+# Copyright (C) Philippe Biondi <phil@secdev.org>
+# This program is published under a GPLv2 license
 
 """Clone of Nmap's first generation OS fingerprinting.
 
@@ -27,18 +27,18 @@ from scapy.error import warning
 from scapy.layers.inet import IP, TCP, UDP, ICMP, UDPerror, IPerror
 from scapy.packet import NoPayload
 from scapy.sendrecv import sr
-from scapy.compat import *
+from scapy.compat import plain_str, raw
 import scapy.modules.six as six
 
 
 if WINDOWS:
-    conf.nmap_base = os.environ["ProgramFiles"] + "\\nmap\\nmap-os-fingerprints"
+    conf.nmap_base = os.environ["ProgramFiles"] + "\\nmap\\nmap-os-fingerprints"  # noqa: E501
 else:
     conf.nmap_base = "/usr/share/nmap/nmap-os-fingerprints"
 
 
 ######################
-## nmap OS fp stuff ##
+#  nmap OS fp stuff  #
 ######################
 
 
@@ -51,6 +51,7 @@ fingerprints database. Loads from conf.nmap_base when self.filename is
 None.
 
     """
+
     def lazy_init(self):
         try:
             fdesc = open(conf.nmap_base
@@ -149,14 +150,14 @@ def nmap_sig(target, oport=80, cport=81, ucport=1):
             options=tcpopt, flags=flags)
         for i, flags in enumerate(["CS", "", "SFUP", "A", "S", "A", "FPU"])
     ]
-    tests.append(IP(dst=target)/UDP(sport=5008, dport=ucport)/(300 * "i"))
+    tests.append(IP(dst=target) / UDP(sport=5008, dport=ucport) / (300 * "i"))
 
     ans, unans = sr(tests, timeout=2)
     ans.extend((x, None) for x in unans)
 
     for snd, rcv in ans:
         if snd.sport == 5008:
-            res["PU"] = (snd, rcv) 
+            res["PU"] = (snd, rcv)
         else:
             test = "T%i" % (snd.sport - 5000)
             if rcv is not None and ICMP in rcv:
@@ -165,6 +166,7 @@ def nmap_sig(target, oport=80, cport=81, ucport=1):
             res[test] = rcv
 
     return nmap_probes2sig(res)
+
 
 def nmap_probes2sig(tests):
     tests = tests.copy()

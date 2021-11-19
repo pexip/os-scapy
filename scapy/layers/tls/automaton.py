@@ -1,15 +1,18 @@
-## This file is part of Scapy
-## Copyright (C) 2007, 2008, 2009 Arnaud Ebalard
-##               2015, 2016, 2017 Maxence Tury
-## This program is published under a GPLv2 license
+# This file is part of Scapy
+# Copyright (C) 2007, 2008, 2009 Arnaud Ebalard
+#               2015, 2016, 2017 Maxence Tury
+# This program is published under a GPLv2 license
 
 """
 The _TLSAutomaton class provides methods common to both TLS client and server.
 """
 
+import select
+import socket
 import struct
 
 from scapy.automaton import Automaton
+from scapy.config import conf
 from scapy.error import log_interactive
 from scapy.packet import Raw
 from scapy.layers.tls.basefields import _tls_type
@@ -38,6 +41,16 @@ class _TLSAutomaton(Automaton):
     We call these successive groups of messages:
     ClientFlight1, ServerFlight1, ClientFlight2 and ServerFlight2.
 
+    With TLS 1.3, the handshake require only 1-RTT:
+
+    Client        Server
+      | --------->>> |    C1 - ClientHello
+      | <<<--------- |    S1 - ServerHello
+      | <<<--------- |    S1 - Certificate [encrypted]
+      | <<<--------- |    S1 - CertificateVerify [encrypted]
+      | <<<--------- |    S1 - Finished [encrypted]
+      | --------->>> |    C2 - Finished [encrypted]
+
     We want to send our messages from the same flight all at once through the
     socket. This is achieved by managing a list of records in 'buffer_out'.
     We may put several messages (i.e. what RFC 5246 calls the record fragments)
@@ -45,11 +58,14 @@ class _TLSAutomaton(Automaton):
     same flight, as with ClientFlight2.
 
     However, note that the flights from the opposite side may be spread wildly
-    accross TLS records and TCP packets. This is why we use a 'get_next_msg'
+    across TLS records and TCP packets. This is why we use a 'get_next_msg'
     method for feeding a list of received messages, 'buffer_in'. Raw data
     which has not yet been interpreted as a TLS record is kept in 'remain_in'.
     """
+
     def parse_args(self, mycert=None, mykey=None, **kargs):
+
+        self.verbose = kargs.pop("verbose", True)
 
         super(_TLSAutomaton, self).parse_args(**kargs)
 
@@ -71,9 +87,6 @@ class _TLSAutomaton(Automaton):
         else:
             self.mykey = None
 
-        self.verbose = kargs.get("verbose", True)
-
-
     def get_next_msg(self, socket_timeout=2, retry=2):
         """
         The purpose of the function is to make next message(s) available in
@@ -94,7 +107,6 @@ class _TLSAutomaton(Automaton):
             # A message is already available.
             return
 
-        self.socket.settimeout(socket_timeout)
         is_sslv2_msg = False
         still_getting_len = True
         grablen = 2
@@ -103,8 +115,7 @@ class _TLSAutomaton(Automaton):
                 grablen = struct.unpack('!H', self.remain_in[3:5])[0] + 5
                 still_getting_len = False
             elif grablen == 2 and len(self.remain_in) >= 2:
-                byte0 = struct.unpack("B", self.remain_in[:1])[0]
-                byte1 = struct.unpack("B", self.remain_in[1:2])[0]
+                byte0, byte1 = struct.unpack("BB", self.remain_in[:2])
                 if (byte0 in _tls_type) and (byte1 == 3):
                     # Retry following TLS scheme. This will cause failure
                     # for SSLv2 packets with length 0x1{4-7}03.
@@ -117,40 +128,59 @@ class _TLSAutomaton(Automaton):
                         grablen = 2 + 0 + ((byte0 & 0x7f) << 8) + byte1
                     else:
                         grablen = 2 + 1 + ((byte0 & 0x3f) << 8) + byte1
-            elif not is_sslv2_msg and grablen == 5 and len(self.remain_in) >= 5:
+            elif not is_sslv2_msg and grablen == 5 and len(self.remain_in) >= 5:  # noqa: E501
                 grablen = struct.unpack('!H', self.remain_in[3:5])[0] + 5
 
             if grablen == len(self.remain_in):
                 break
 
+            final = False
             try:
-                tmp = self.socket.recv(grablen - len(self.remain_in))
+                tmp, _, _ = select.select([self.socket], [], [],
+                                          socket_timeout)
                 if not tmp:
                     retry -= 1
                 else:
-                    self.remain_in += tmp
-            except:
-                self.vprint("Could not join host ! Retrying...")
+                    data = tmp[0].recv(grablen - len(self.remain_in))
+                    if not data:
+                        # Socket peer was closed
+                        self.vprint("Peer socket closed !")
+                        final = True
+                    else:
+                        self.remain_in += data
+            except Exception as ex:
+                if not isinstance(ex, socket.timeout):
+                    self.vprint("Could not join host (%s) ! Retrying..." % ex)
                 retry -= 1
+            else:
+                if final:
+                    raise self.SOCKET_CLOSED()
 
         if len(self.remain_in) < 2 or len(self.remain_in) != grablen:
             # Remote peer is not willing to respond
             return
 
-        p = TLS(self.remain_in, tls_session=self.cur_session)
-        self.cur_session = p.tls_session
-        self.remain_in = b""
-        if isinstance(p, SSLv2) and not p.msg:
-            p.msg = Raw("")
-        if self.cur_session.tls_version is None or \
-           self.cur_session.tls_version < 0x0304:
-            self.buffer_in += p.msg
+        if (byte0 == 0x17 and
+                (self.cur_session.advertised_tls_version >= 0x0304 or
+                 self.cur_session.tls_version >= 0x0304)):
+            p = TLS13(self.remain_in, tls_session=self.cur_session)
+            self.remain_in = b""
+            self.buffer_in += p.inner.msg
         else:
-            if isinstance(p, TLS13):
-                self.buffer_in += p.inner.msg
-            else:
-                # should be TLS13ServerHello only
+            p = TLS(self.remain_in, tls_session=self.cur_session)
+            self.cur_session = p.tls_session
+            self.remain_in = b""
+            if isinstance(p, SSLv2) and not p.msg:
+                p.msg = Raw("")
+            if self.cur_session.tls_version is None or \
+               self.cur_session.tls_version < 0x0304:
                 self.buffer_in += p.msg
+            else:
+                if isinstance(p, TLS13):
+                    self.buffer_in += p.inner.msg
+                else:
+                    # should be TLS13ServerHello only
+                    self.buffer_in += p.msg
 
         while p.payload:
             if isinstance(p.payload, Raw):
@@ -163,6 +193,8 @@ class _TLSAutomaton(Automaton):
                     self.buffer_in += p.msg
                 else:
                     self.buffer_in += p.inner.msg
+            else:
+                p = p.payload
 
     def raise_on_packet(self, pkt_cls, state, get_next_msg=True):
         """
@@ -173,18 +205,21 @@ class _TLSAutomaton(Automaton):
         # Maybe we already parsed the expected packet, maybe not.
         if get_next_msg:
             self.get_next_msg()
+        from scapy.layers.tls.handshake import TLSClientHello
         if (not self.buffer_in or
-            not isinstance(self.buffer_in[0], pkt_cls)):
+                (not isinstance(self.buffer_in[0], pkt_cls) and
+                 not (isinstance(self.buffer_in[0], TLSClientHello) and
+                 self.cur_session.advertised_tls_version == 0x0304))):
             return
         self.cur_pkt = self.buffer_in[0]
         self.buffer_in = self.buffer_in[1:]
         raise state()
 
-    def add_record(self, is_sslv2=None, is_tls13=None):
+    def add_record(self, is_sslv2=None, is_tls13=None, is_tls12=None):
         """
         Add a new TLS or SSLv2 or TLS 1.3 record to the packets buffered out.
         """
-        if is_sslv2 is None and is_tls13 is None:
+        if is_sslv2 is None and is_tls13 is None and is_tls12 is None:
             v = (self.cur_session.tls_version or
                  self.cur_session.advertised_tls_version)
             if v in [0x0200, 0x0002]:
@@ -195,6 +230,11 @@ class _TLSAutomaton(Automaton):
             self.buffer_out.append(SSLv2(tls_session=self.cur_session))
         elif is_tls13:
             self.buffer_out.append(TLS13(tls_session=self.cur_session))
+        # For TLS 1.3 middlebox compatibility, TLS record version must
+        # be 0x0303
+        elif is_tls12:
+            self.buffer_out.append(TLS(version="TLS 1.2",
+                                       tls_session=self.cur_session))
         else:
             self.buffer_out.append(TLS(tls_session=self.cur_session))
 
@@ -222,5 +262,7 @@ class _TLSAutomaton(Automaton):
 
     def vprint(self, s=""):
         if self.verbose:
-            log_interactive.info("> %s", s)
-
+            if conf.interactive:
+                log_interactive.info("> %s", s)
+            else:
+                print("> %s" % s)
