@@ -1,5 +1,5 @@
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more informations
+# See http://www.secdev.org/projects/scapy for more information
 # Copyright (C) Philippe Biondi <phil@secdev.org>
 # This program is published under a GPLv2 license
 
@@ -23,7 +23,7 @@ from scapy.layers.inet import IPField
 from scapy.layers.inet6 import IP6Field
 from scapy.data import ETHER_ANY
 import scapy.modules.six as six
-from scapy.compat import *
+from scapy.compat import orb, chb
 
 
 # Protocol layers
@@ -304,6 +304,7 @@ class LLTDAttribute(Packet):
         else:
             return cls
         return SPECIFIC_CLASSES.get(cmd, cls)
+
 
 SPECIFIC_CLASSES = {}
 
@@ -800,6 +801,7 @@ class LargeTlvBuilder(object):
     To get the result, use .get_data()
 
     """
+
     def __init__(self):
         self.types_offsets = {}
         self.data = {}

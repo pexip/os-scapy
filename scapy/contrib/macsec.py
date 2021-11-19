@@ -1,7 +1,10 @@
 # This file is part of Scapy
-## See http://www.secdev.org/projects/scapy for more informations
-## Copyright (C) Sabrina Dubroca <sd@queasysnail.net>
-## This program is published under a GPLv2 license
+# See http://www.secdev.org/projects/scapy for more information
+# Copyright (C) Sabrina Dubroca <sd@queasysnail.net>
+# This program is published under a GPLv2 license
+
+# scapy.contrib.description = 802.1AE - IEEE MAC Security standard (MACsec)
+# scapy.contrib.status = loads
 
 """
 Classes and functions for MACsec.
@@ -10,18 +13,22 @@ Classes and functions for MACsec.
 from __future__ import absolute_import
 from __future__ import print_function
 import struct
+import copy
 
 from scapy.config import conf
-from scapy.fields import *
+from scapy.fields import BitField, ConditionalField, IntField, PacketField, \
+    XShortEnumField
 from scapy.packet import Packet, Raw, bind_layers
 from scapy.layers.l2 import Ether, Dot1AD, Dot1Q
 from scapy.layers.eap import MACsecSCI
 from scapy.layers.inet import IP
 from scapy.layers.inet6 import IPv6
+from scapy.compat import raw
+from scapy.data import ETH_P_MACSEC, ETHER_TYPES, ETH_P_IP, ETH_P_IPV6
+from scapy.error import log_loading
 import scapy.modules.six as six
 
 if conf.crypto_valid:
-    from cryptography.exceptions import InvalidTag
     from cryptography.hazmat.backends import default_backend
     from cryptography.hazmat.primitives.ciphers import (
         Cipher,
@@ -44,7 +51,7 @@ class MACsecSA(object):
     Provides encapsulation, decapsulation, encryption, and decryption
     of MACsec frames
     """
-    def __init__(self, sci, an, pn, key, icvlen, encrypt, send_sci):
+    def __init__(self, sci, an, pn, key, icvlen, encrypt, send_sci, xpn_en=False, ssci=None, salt=None):  # noqa: E501
         if isinstance(sci, six.integer_types):
             self.sci = struct.pack('!Q', sci)
         elif isinstance(sci, bytes):
@@ -57,10 +64,29 @@ class MACsecSA(object):
         self.icvlen = icvlen
         self.do_encrypt = encrypt
         self.send_sci = send_sci
+        self.xpn_en = xpn_en
+        if self.xpn_en:
+            # Get SSCI (32 bits)
+            if isinstance(ssci, six.integer_types):
+                self.ssci = struct.pack('!L', ssci)
+            elif isinstance(ssci, bytes):
+                self.ssci = ssci
+            else:
+                raise TypeError("SSCI must be either bytes or int")
+            # Get Salt (96 bits, only bytes allowed)
+            if isinstance(salt, bytes):
+                self.salt = salt
+            else:
+                raise TypeError("Salt must be bytes")
 
     def make_iv(self, pkt):
         """generate an IV for the packet"""
-        return self.sci + struct.pack('!I', pkt[MACsec].pn)
+        if self.xpn_en:
+            tmp_pn = (self.pn & 0xFFFFFFFF00000000) | (pkt[MACsec].pn & 0xFFFFFFFF)  # noqa: E501
+            tmp_iv = self.ssci + struct.pack('!Q', tmp_pn)
+            return bytes(bytearray([a ^ b for a, b in zip(bytearray(tmp_iv), bytearray(self.salt))]))  # noqa: E501
+        else:
+            return self.sci + struct.pack('!I', pkt[MACsec].pn)
 
     @staticmethod
     def split_pkt(pkt, assoclen, icvlen=0):
@@ -89,7 +115,7 @@ class MACsecSA(object):
     @staticmethod
     def shortlen(pkt):
         """determine shortlen for a raw packet (not encapsulated yet)"""
-        datalen = len(pkt) - 2*6
+        datalen = len(pkt) - 2 * 6
         if datalen < 48:
             return datalen
         return 0
@@ -97,7 +123,7 @@ class MACsecSA(object):
     def encap(self, pkt):
         """encapsulate a frame using this Secure Association"""
         if pkt.name != Ether().name:
-            raise TypeError('cannot encapsulate packet in MACsec, must be Ethernet')
+            raise TypeError('cannot encapsulate packet in MACsec, must be Ethernet')  # noqa: E501
         hdr = copy.deepcopy(pkt)
         payload = hdr.payload
         del hdr.payload
@@ -105,24 +131,24 @@ class MACsecSA(object):
                      SC=self.send_sci,
                      E=self.e_bit(), C=self.c_bit(),
                      shortlen=MACsecSA.shortlen(pkt),
-                     pn=self.pn, type=pkt.type)
+                     pn=(self.pn & 0xFFFFFFFF), type=pkt.type)
         hdr.type = ETH_P_MACSEC
-        return hdr/tag/payload
+        return hdr / tag / payload
 
     # this doesn't really need to be a method, but for symmetry with
     # encap(), it is
     def decap(self, orig_pkt):
         """decapsulate a MACsec frame"""
-        if orig_pkt.name != Ether().name or orig_pkt.payload.name != MACsec().name:
-            raise TypeError('cannot decapsulate MACsec packet, must be Ethernet/MACsec')
+        if orig_pkt.name != Ether().name or orig_pkt.payload.name != MACsec().name:  # noqa: E501
+            raise TypeError('cannot decapsulate MACsec packet, must be Ethernet/MACsec')  # noqa: E501
         packet = copy.deepcopy(orig_pkt)
         prev_layer = packet[MACsec].underlayer
         prev_layer.type = packet[MACsec].type
         next_layer = packet[MACsec].payload
         del prev_layer.payload
         if prev_layer.name == Ether().name:
-            return Ether(raw(prev_layer/next_layer))
-        return prev_layer/next_layer
+            return Ether(raw(prev_layer / next_layer))
+        return prev_layer / next_layer
 
     def encrypt(self, orig_pkt, assoclen=None):
         """encrypt a MACsec frame for this Secure Association"""
@@ -168,10 +194,10 @@ class MACsecSA(object):
         iv = self.make_iv(hdr)
         assoc, ct, icv = MACsecSA.split_pkt(orig_pkt, assoclen, self.icvlen)
         decryptor = Cipher(
-               algorithms.AES(self.key),
-               modes.GCM(iv, icv),
-               backend=default_backend()
-           ).decryptor()
+            algorithms.AES(self.key),
+            modes.GCM(iv, icv),
+            backend=default_backend()
+        ).decryptor()
         decryptor.authenticate_additional_data(assoc)
         pt = assoc[hdrlen:assoclen]
         pt += decryptor.update(ct)
@@ -194,7 +220,7 @@ class MACsec(Packet):
                    BitField('reserved', 0, 2),
                    BitField('shortlen', 0, 6),
                    IntField("pn", 1),
-                   ConditionalField(PacketField("sci", None, MACsecSCI), lambda pkt: pkt.SC),
+                   ConditionalField(PacketField("sci", None, MACsecSCI), lambda pkt: pkt.SC),  # noqa: E501
                    ConditionalField(XShortEnumField("type", None, ETHER_TYPES),
                                     lambda pkt: pkt.type is not None)]
 
@@ -210,6 +236,6 @@ class MACsec(Packet):
 bind_layers(MACsec, IP, type=ETH_P_IP)
 bind_layers(MACsec, IPv6, type=ETH_P_IPV6)
 
-bind_layers( Dot1AD,        MACsec,        type=ETH_P_MACSEC)
-bind_layers( Dot1Q,         MACsec,        type=ETH_P_MACSEC)
-bind_layers( Ether,         MACsec,        type=ETH_P_MACSEC)
+bind_layers(Dot1AD, MACsec, type=ETH_P_MACSEC)
+bind_layers(Dot1Q, MACsec, type=ETH_P_MACSEC)
+bind_layers(Ether, MACsec, type=ETH_P_MACSEC)

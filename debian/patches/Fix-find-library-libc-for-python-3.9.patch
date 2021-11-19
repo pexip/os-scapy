@@ -1,0 +1,26 @@
+From: Sophie Brun <sophie@offensive-security.com>
+Date: Mon, 14 Dec 2020 11:38:31 +0100
+Subject: Fix find-library libc for python 3.9
+
+This issue is caused by an issue in Python 3.9 ctypes.util.find_library.
+See https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=976637
+
+Bug-Debian: https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=973171
+Forwarded: https://github.com/secdev/scapy/pull/3000
+---
+ scapy/arch/bpf/core.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/scapy/arch/bpf/core.py b/scapy/arch/bpf/core.py
+index 0ebdb53..c74902a 100644
+--- a/scapy/arch/bpf/core.py
++++ b/scapy/arch/bpf/core.py
+@@ -27,7 +27,7 @@ from scapy.modules.six.moves import range
+ 
+ # ctypes definitions
+ 
+-LIBC = cdll.LoadLibrary(find_library("libc"))
++LIBC = cdll.LoadLibrary(find_library("c"))
+ LIBC.ioctl.argtypes = [c_int, c_ulong, c_char_p]
+ LIBC.ioctl.restype = c_int
+ 

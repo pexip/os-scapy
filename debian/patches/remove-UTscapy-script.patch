@@ -1,0 +1,27 @@
+From: Debian Security Tools <team+pkg-security@tracker.debian.org>
+Date: Thu, 17 Sep 2020 15:58:55 +0200
+Subject: remove-UTscapy-script
+
+Don't install the UTscapy script in /usr/bin. It's the Unit testing
+infrastructure for Scapy.
+
+
+Last-Update: 2020-09-17
+
+Forwarded: not-needed
+---
+ setup.py | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/setup.py b/setup.py
+index 2c60986..7eb50e5 100755
+--- a/setup.py
++++ b/setup.py
+@@ -42,7 +42,6 @@ setup(
+     entry_points={
+         'console_scripts': [
+             'scapy = scapy.main:interact',
+-            'UTscapy = scapy.tools.UTscapy:main'
+         ]
+     },
+     python_requires='>=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, <4',

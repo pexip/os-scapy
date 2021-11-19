@@ -9,7 +9,8 @@ Welcome to Scapy's documentation!
    :scale: 20
    :align: center
 
-:Release: |version|
+:Version: |version|
+:Release: |release|
 :Date: |today|
 
 This document is under a `Creative Commons Attribution - Non-Commercial 
@@ -17,17 +18,43 @@ This document is under a `Creative Commons Attribution - Non-Commercial
 
 .. toctree::
    :maxdepth: 2
+   :caption: General documentation
    
    introduction
    installation
    
    usage
    advanced_usage
+   routing
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Extend scapy
+
    extending
    build_dissect
    functions
 
+.. toctree::
+   :maxdepth: 2
+   :caption: Layer-specific documentation
+   :glob:
+
+   layers/index.rst
+
+.. toctree::
+   :maxdepth: 2
+   :caption: About
+
    troubleshooting
    development
    backmatter
+
+.. only:: html
+
+    .. toctree::
+       :maxdepth: 4
+       :caption: API Reference
+
+       api/scapy.rst
  

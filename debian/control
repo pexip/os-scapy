@@ -1,44 +1,29 @@
 Source: scapy
 Maintainer: Pexip AS <packaging@pexip.com>
-XSBC-Pexip-Original-Maintainer: Internet Measurement Packaging Team <pkg-netmeasure-discuss@lists.alioth.debian.org>
-XSBC-Pexip-Original-Uploaders: Iain R. Learmonth <irl@debian.org>
+XSBC-Pexip-Original-Maintainer: Debian Security Tools <team+pkg-security@tracker.debian.org>
+XSBC-Pexip-Original-Uploaders: Raphaël Hertzog <raphael@offensive-security.com>
 Section: python
 Priority: optional
-Build-Depends: debhelper (>= 11),
-               dh-python,
-               python-all,
-               python3-all,
-               python3-distutils
-Standards-Version: 4.1.4
-Vcs-Browser: https://salsa.debian.org/ineteng-team/scapy
-Vcs-Git: https://salsa.debian.org/ineteng-team/scapy.git
-Homepage: https://github.com/secdev/scapy
-XS-Pexip-Upstream: http://ftp.debian.org/debian/ bullseye
+Build-Depends:
+ debhelper-compat (= 12),
+ dh-python,
+ python-all, python3-all,
+ python-setuptools, python3-setuptools,
+ python-sphinx, python3-sphinx,
+ python-sphinx-rtd-theme, python3-sphinx-rtd-theme,
+ tox,
+Rules-Requires-Root: no
+Standards-Version: 4.5.1
+Vcs-Browser: https://salsa.debian.org/pkg-security-team/scapy
+Vcs-Git: https://salsa.debian.org/pkg-security-team/scapy.git
+Homepage: https://scapy.net/
 
 Package: python-scapy
 Architecture: all
-Depends: ${python:Depends},
-         ${misc:Depends}
-Suggests: tcpdump,
-          tcpreplay,
-          wireshark,
-          graphviz,
-          imagemagick,
-          python-gnuplot,
-          python-crypto,
-          python-pyx,
-          ebtables,
-          python-visual,
-          sox,
-          xpdf,
-          gv,
-          hexer,
-          librsvg2-bin,
-          python-pcapy,
-          python-geoip
+Depends: ${misc:Depends}, ${python:Depends}, ${sphinxdoc:Depends}
+Recommends: ipython, python-cryptography, tcpdump
+Suggests: graphviz, python-matplotlib, python-pyx, sox, tcpreplay, wireshark
 Provides: scapy
-Breaks: scapy (<< 1.0.5-1)
-Replaces: scapy (<< 1.0.5-1)
 Description: Packet generator/sniffer and network scanner/discovery (Python 2)
  Scapy is a powerful interactive packet manipulation tool, packet
  generator, network scanner, network discovery, packet sniffer, etc. It
@@ -55,23 +40,12 @@ Description: Packet generator/sniffer and network scanner/discovery (Python 2)
 
 Package: python3-scapy
 Architecture: all
-Depends: ${python3:Depends},
-         ${misc:Depends}
-Recommends: tcpdump,
-            ipython3,
-            python3-matplotlib,
-            python3-pyx,
-            graphviz
-Suggests: tcpreplay,
-          wireshark,
-          imagemagick,
-          python3-crypto,
-          ebtables,
-          sox,
-          gv,
-          hexer,
-          librsvg2-bin,
-          python3-geoip
+Depends: ${misc:Depends}, ${python3:Depends}, ${sphinxdoc:Depends}
+Breaks: python-scapy (<< 2.4.3-3~)
+Replaces: python-scapy (<< 2.4.3-3~)
+Recommends: ipython3, python3-cryptography, tcpdump
+Suggests: graphviz, python3-matplotlib, python3-pyx, sox, tcpreplay, wireshark
+Provides: scapy
 Description: Packet generator/sniffer and network scanner/discovery (Python 3)
  Scapy is a powerful interactive packet manipulation tool, packet
  generator, network scanner, network discovery, packet sniffer, etc. It

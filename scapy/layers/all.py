@@ -1,7 +1,7 @@
-## This file is part of Scapy
-## See http://www.secdev.org/projects/scapy for more informations
-## Copyright (C) Philippe Biondi <phil@secdev.org>
-## This program is published under a GPLv2 license
+# This file is part of Scapy
+# See http://www.secdev.org/projects/scapy for more information
+# Copyright (C) Philippe Biondi <phil@secdev.org>
+# This program is published under a GPLv2 license
 
 """
 All layers. Configurable with conf.load_layers.
@@ -11,8 +11,9 @@ from __future__ import absolute_import
 from scapy.config import conf
 from scapy.error import log_loading
 from scapy.main import load_layer
-import logging, importlib
+import logging
 import scapy.modules.six as six
+
 ignored = list(six.moves.builtins.__dict__) + ["sys"]
 log = logging.getLogger("scapy.loading")
 
@@ -25,4 +26,7 @@ for _l in conf.load_layers:
     except Exception as e:
         log.warning("can't import layer %s: %s", _l, e)
 
-del _l
+try:
+    del _l
+except NameError:
+    pass

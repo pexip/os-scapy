@@ -1,3 +1,108 @@
+scapy (2.4.4-4pexip1) pexip; urgency=medium
+
+  * Backport bullseye version to Pexos.
+  * Reinstate python2 packaging until Pexcellent is ported.
+  * Disable doc build as we don't need it and it needs a newer sphinx.
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Fri, 19 Nov 2021 14:23:50 +0000
+
+scapy (2.4.4-4) unstable; urgency=medium
+
+  * Team upload.
+
+  [ Romain Francoise ]
+  * Drop debian/patches/use-absolute-paths.patch (#979338)
+  * debian/tests/control: version dependency on tcpdump
+  * Cherry-pick upstream commit 42d58d8729 to fix pipetool test
+    (and thus fix autopkgtest too)
+
+ -- Raphaël Hertzog <hertzog@debian.org>  Mon, 11 Jan 2021 11:40:10 +0100
+
+scapy (2.4.4-3) unstable; urgency=medium
+
+  * Team upload.
+
+  [ Raphaël Hertzog ]
+  * Bump Standards-Version to 4.5.1
+  * Switch to debhelper compat level 13
+
+  [ Sophie Brun ]
+  * Add a patch to fix find_library with Python 3.9 (Closes: #973171)
+
+ -- Sophie Brun <sophie@offensive-security.com>  Mon, 14 Dec 2020 11:46:53 +0100
+
+scapy (2.4.4-2) unstable; urgency=medium
+
+  * Add support for Python 3.9 (Closes: #975519)
+
+ -- Raphaël Hertzog <raphael@offensive-security.com>  Mon, 23 Nov 2020 12:08:20 +0100
+
+scapy (2.4.4-1) unstable; urgency=medium
+
+  * Team upload.
+
+  [ Samuel Henrique ]
+  * Add Salsa's CI configuration file
+  * Configure git-buildpackage for Debian
+
+  [ Sophie Brun ]
+  * New upstream version 2.4.4
+  * Refresh patches
+  * Bump Standards-Version to 4.5.0 (no changes)
+  * Update Homepage
+  * Use new format for debian/copyright
+  * Build and install docs (Closes: #773683)
+  * Add information about test
+  * Add autopkgtest
+
+ -- Sophie Brun <sophie@offensive-security.com>  Fri, 25 Sep 2020 10:24:44 +0200
+
+scapy (2.4.3-4) unstable; urgency=medium
+
+  * Drop python2 support; Closes: #938439, #936054
+  * debian/control
+    - update Vcs fields to point to pkg-security-team
+
+ -- Sandro Tosi <morph@debian.org>  Mon, 30 Mar 2020 20:22:54 -0400
+
+scapy (2.4.3-3) unstable; urgency=medium
+
+  * Take over package in pkg-security team.
+  * Restore python2 package as we still have reverse dependencies.
+    Keep /usr/bin/scapy in python3-scapy however. Let python-scapy
+    provide /usr/bin/scapy2 temporarily. Add appropriate breaks/replaces
+    forcing joint upgrade of both packages.
+  * Switch to debhelper compat level 12
+  * Add symlink for scapy3 manual page too
+  * Add a small patch for python 2 compatibility.
+
+ -- Raphaël Hertzog <raphael@offensive-security.com>  Thu, 19 Sep 2019 15:45:25 +0200
+
+scapy (2.4.3-2) unstable; urgency=medium
+
+  * d/control:
+    - Drops Breaks from python3-scapy for python-scapy (Closes: #940699)
+
+ -- Iain R. Learmonth <irl@debian.org>  Thu, 19 Sep 2019 09:51:19 +0100
+
+scapy (2.4.3-1) unstable; urgency=medium
+
+  [ Gabriel Potter ]
+
+  * New upstream version 2.4.3 (Closes: #929032)
+  * debian/control:
+   - Updates suggested and recommended packages (Closes: #907235, #939403)
+   - Update standards version to 4.4.0
+  * debian/patches:
+   - Refresh paths.patch and setup.py.patch
+
+  [ Iain R. Learmonth ]
+
+  * Drop the Python 2 package (Closes: #938439)
+  * The scapy executable is now provided by the Python 3 package
+
+ -- Iain R. Learmonth <irl@debian.org>  Tue, 10 Sep 2019 18:10:37 +0100
+
 scapy (2.4.0-2pexip2) pexip; urgency=medium
 
   * Rebuild in buster environment

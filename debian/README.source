@@ -1,7 +1,0 @@
-Note that the python3-scapy package is built by src:scapy3k. There is no
-unified codebase that supports both Python 2 and Python 3 due to the extensive
-use of bytearrays.
-
-This package uses quilt in order to apply patches to the upstream source.  
-Patches are stored in debian/patches. For further details, see the man page for 
-quilt.

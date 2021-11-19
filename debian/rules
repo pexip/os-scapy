@@ -5,6 +5,7 @@
 include /usr/share/dpkg/pkg-info.mk
 export PYBUILD_NAME=scapy
 
+
 %:
 	dh $@ --with=python2,python3 --buildsystem=pybuild
 
@@ -15,12 +16,10 @@ override_dh_auto_clean:
 	dh_auto_clean
 	-rm scapy/VERSION
 
-override_dh_auto_install:
-	dh_auto_install
-	mv debian/python3-scapy/usr/bin/scapy \
-	   debian/python3-scapy/usr/bin/scapy3
-	mv debian/python3-scapy/usr/share/man/man1/scapy.1.gz \
-	   debian/python3-scapy/usr/share/man/man1/scapy3.1.gz
-
 override_dh_auto_test:
-	echo "Tests disabled, dependencies not installed during build"
+	# disable tests: they required network
+	echo "Tests disabled"
+
+override_dh_auto_build:
+	dh_auto_build
+	# PYTHONPATH=. http_proxy='127.0.0.1:9' sphinx-build -N -bhtml doc/scapy build/html
