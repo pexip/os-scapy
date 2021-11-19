@@ -1,3 +1,9 @@
+scapy (2.4.4-4pexip2) pexip; urgency=medium
+
+  * Don't ship conflicting scapy links.
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Fri, 19 Nov 2021 15:25:17 +0000
+
 scapy (2.4.4-4pexip1) pexip; urgency=medium
 
   * Backport bullseye version to Pexos.
