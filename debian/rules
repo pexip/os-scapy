@@ -7,7 +7,7 @@ export PYBUILD_NAME=scapy
 
 
 %:
-	dh $@ --with=python2,python3 --buildsystem=pybuild
+	dh $@ --with=python3 --buildsystem=pybuild
 
 override_dh_auto_configure:
 	echo -n $(DEB_VERSION_UPSTREAM) > scapy/VERSION

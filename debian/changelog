@@ -1,6 +1,7 @@
 scapy (2.4.4-4pexip4) pexip; urgency=medium
 
   * Initial bullseye build
+  * Remove python2 packaging.
 
  -- Mark Hymers <mark.hymers@pexip.com>  Thu, 02 Jun 2022 14:42:55 +0100
 

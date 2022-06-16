@@ -7,10 +7,10 @@ Priority: optional
 Build-Depends:
  debhelper-compat (= 12),
  dh-python,
- python-all, python3-all,
- python-setuptools, python3-setuptools,
- python-sphinx, python3-sphinx,
- python-sphinx-rtd-theme, python3-sphinx-rtd-theme,
+ python3-all,
+ python3-setuptools,
+ python3-sphinx,
+ python3-sphinx-rtd-theme,
  tox,
 Rules-Requires-Root: no
 Standards-Version: 4.5.1
@@ -18,26 +18,6 @@ Vcs-Browser: https://salsa.debian.org/pkg-security-team/scapy
 Vcs-Git: https://salsa.debian.org/pkg-security-team/scapy.git
 Homepage: https://scapy.net/
 XS-Pexip-Upstream: http://ftp.debian.org/debian/ bullseye
-
-Package: python-scapy
-Architecture: all
-Depends: ${misc:Depends}, ${python:Depends}, ${sphinxdoc:Depends}
-Recommends: ipython, python-cryptography, tcpdump
-Suggests: graphviz, python-matplotlib, python-pyx, sox, tcpreplay, wireshark
-Provides: scapy
-Description: Packet generator/sniffer and network scanner/discovery (Python 2)
- Scapy is a powerful interactive packet manipulation tool, packet
- generator, network scanner, network discovery, packet sniffer, etc. It
- can for the moment replace hping, 85% of nmap, arpspoof, arp-sk, arping,
- tcpdump, tethereal, p0f, ....
- .
- In scapy you define a set of packets, then it sends them, receives
- answers, matches requests with answers and returns a list of packet couples
- (request, answer) and a list of unmatched packets. This has the big advantage
- over tools like nmap or hping that an answer is not reduced to
- (open/closed/filtered), but is the whole packet.
- .
- This package contains the Python 2 version of the library and scapy executable.
 
 Package: python3-scapy
 Architecture: all
