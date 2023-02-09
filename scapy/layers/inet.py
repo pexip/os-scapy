@@ -1,14 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Philippe Biondi <phil@secdev.org>
-# This program is published under a GPLv2 license
 
 """
 IPv4 (Internet Protocol v4).
 """
 
-from __future__ import absolute_import
-from __future__ import print_function
 import time
 import struct
 import re
@@ -19,32 +17,50 @@ from collections import defaultdict
 
 from scapy.utils import checksum, do_graph, incremental_label, \
     linehexdump, strxor, whois, colgen
+from scapy.ansmachine import AnsweringMachine
 from scapy.base_classes import Gen, Net
 from scapy.data import ETH_P_IP, ETH_P_ALL, DLT_RAW, DLT_RAW_ALT, DLT_IPV4, \
     IP_PROTOS, TCP_SERVICES, UDP_SERVICES
 from scapy.layers.l2 import Ether, Dot3, getmacbyip, CookedLinux, GRE, SNAP, \
     Loopback
-from scapy.compat import raw, chb, orb, bytes_encode
+from scapy.compat import raw, chb, orb, bytes_encode, Optional
 from scapy.config import conf
-from scapy.extlib import plt, MATPLOTLIB, MATPLOTLIB_INLINED, \
-    MATPLOTLIB_DEFAULT_PLOT_KARGS
-from scapy.fields import ConditionalField, IPField, BitField, BitEnumField, \
-    FieldLenField, StrLenField, ByteField, ShortField, ByteEnumField, \
-    DestField, FieldListField, FlagsField, IntField, MultiEnumField, \
-    PacketListField, ShortEnumField, SourceIPField, StrField, \
-    StrFixedLenField, XByteField, XShortField, Emph
+from scapy.fields import (
+    BitEnumField,
+    BitField,
+    ByteEnumField,
+    ByteField,
+    ConditionalField,
+    DestField,
+    Emph,
+    FieldLenField,
+    FieldListField,
+    FlagsField,
+    IPField,
+    IntField,
+    MultiEnumField,
+    MultipleTypeField,
+    PacketListField,
+    ShortEnumField,
+    ShortField,
+    SourceIPField,
+    StrField,
+    StrFixedLenField,
+    StrLenField,
+    XByteField,
+    XShortField,
+)
 from scapy.packet import Packet, bind_layers, bind_bottom_up, NoPayload
 from scapy.volatile import RandShort, RandInt, RandBin, RandNum, VolatileValue
 from scapy.sendrecv import sr, sr1
-from scapy.plist import PacketList, SndRcvList
+from scapy.plist import _PacketList, PacketList, SndRcvList
 from scapy.automaton import Automaton, ATMT
-from scapy.error import warning
+from scapy.error import log_runtime, warning
 from scapy.pton_ntop import inet_pton
 
 import scapy.as_resolvers
 
-import scapy.modules.six as six
-from scapy.modules.six.moves import range
+import scapy.libs.six as six
 
 ####################
 #  IP Tools class  #
@@ -279,8 +295,10 @@ TCPOptions = (
      8: ("Timestamp", "!II"),
      14: ("AltChkSum", "!BH"),
      15: ("AltChkSumOpt", None),
+     19: ("MD5", "16s"),
      25: ("Mood", "!p"),
      28: ("UTO", "!H"),
+     29: ("AO", None),
      34: ("TFO", "!II"),
      # RFC 3692
      # 253: ("Experiment", "!HHHH"),
@@ -295,10 +313,30 @@ TCPOptions = (
      "Timestamp": 8,
      "AltChkSum": 14,
      "AltChkSumOpt": 15,
+     "MD5": 19,
      "Mood": 25,
      "UTO": 28,
+     "AO": 29,
      "TFO": 34,
      })
+
+
+class TCPAOValue(Packet):
+    """Value of TCP-AO option"""
+    fields_desc = [
+        ByteField("keyid", None),
+        ByteField("rnextkeyid", None),
+        StrLenField("mac", "", length_from=lambda p:len(p.original) - 2),
+    ]
+
+
+def get_tcpao(tcphdr):
+    # type: (TCP) -> Optional[TCPAOValue]
+    """Get the TCP-AO option from the header"""
+    for optid, optval in tcphdr.options:
+        if optid == 'AO':
+            return optval
+    return None
 
 
 class RandTCPOptions(VolatileValue):
@@ -323,7 +361,7 @@ class RandTCPOptions(VolatileValue):
                 rand_vals.append((oname, b''))
             else:
                 # Process the fmt arguments 1 by 1
-                structs = fmt[1:] if fmt[0] == "!" else fmt
+                structs = re.findall(r"!?([bBhHiIlLqQfdpP]|\d+[spx])", fmt)
                 rval = []
                 for stru in structs:
                     stru = "!" + stru
@@ -346,7 +384,9 @@ class TCPOptionsField(StrField):
     def getfield(self, pkt, s):
         opsz = (pkt.dataofs - 5) * 4
         if opsz < 0:
-            warning("bad dataofs (%i). Assuming dataofs=5" % pkt.dataofs)
+            log_runtime.info(
+                "bad dataofs (%i). Assuming dataofs=5", pkt.dataofs
+            )
             opsz = 0
         return s[opsz:], self.m2i(pkt, s[:opsz])
 
@@ -366,13 +406,17 @@ class TCPOptionsField(StrField):
             except IndexError:
                 olen = 0
             if olen < 2:
-                warning("Malformed TCP option (announced length is %i)" % olen)
+                log_runtime.info(
+                    "Malformed TCP option (announced length is %i)", olen
+                )
                 olen = 2
             oval = x[2:olen]
             if onum in TCPOptions[0]:
                 oname, ofmt = TCPOptions[0][onum]
                 if onum == 5:  # SAck
                     ofmt += "%iI" % (len(oval) // 4)
+                if onum == 29:  # AO
+                    oval = TCPAOValue(oval)
                 if ofmt and struct.calcsize(ofmt) == len(oval):
                     oval = struct.unpack(ofmt, oval)
                     if len(oval) == 1:
@@ -410,8 +454,10 @@ class TCPOptionsField(StrField):
                         if not isinstance(oval, tuple):
                             oval = (oval,)
                         oval = struct.pack(ofmt, *oval)
+                    if onum == 29:  # AO
+                        oval = bytes(oval)
                 else:
-                    warning("option [%s] unknown. Skipped.", oname)
+                    warning("Option [%s] unknown. Skipped.", oname)
                     continue
             else:
                 onum = oname
@@ -419,7 +465,7 @@ class TCPOptionsField(StrField):
                     warning("Invalid option number [%i]" % onum)
                     continue
                 if not isinstance(oval, (bytes, str)):
-                    warning("option [%i] is not bytes." % onum)
+                    warning("Option [%i] is not bytes." % onum)
                     continue
             if isinstance(oval, str):
                 oval = bytes_encode(oval)
@@ -591,9 +637,9 @@ class IP(Packet, IPTools):
             nb = (len(s) - lastfragsz + fragsize - 1) // fragsize + 1
             for i in range(nb):
                 q = p.copy()
-                del(q[fnb].payload)
-                del(q[fnb].chksum)
-                del(q[fnb].len)
+                del q[fnb].payload
+                del q[fnb].chksum
+                del q[fnb].len
                 if i != nb - 1:
                     q[fnb].flags |= 1
                     fragend = (i + 1) * fragsize
@@ -607,18 +653,14 @@ class IP(Packet, IPTools):
         return lst
 
 
-def in4_chksum(proto, u, p):
-    """
-    As Specified in RFC 2460 - 8.1 Upper-Layer Checksums
+def in4_pseudoheader(proto, u, plen):
+    # type: (int, IP, int) -> bytes
+    """IPv4 Pseudo Header as defined in RFC793 as bytes
 
-    Performs IPv4 Upper Layer checksum computation. Provided parameters are:
-    - 'proto' : value of upper layer protocol
-    - 'u'  : IP upper layer instance
-    - 'p'  : the payload of the upper layer provided as a string
+    :param proto: value of upper layer protocol
+    :param u: IP layer instance
+    :param plen: the length of the upper layer and payload
     """
-    if not isinstance(u, IP):
-        warning("No IP underlayer to compute checksum. Leaving null.")
-        return 0
     if u.len is not None:
         if u.ihl is None:
             olen = sum(len(x) for x in u.options)
@@ -627,13 +669,87 @@ def in4_chksum(proto, u, p):
             ihl = u.ihl
         ln = max(u.len - 4 * ihl, 0)
     else:
-        ln = len(p)
-    psdhdr = struct.pack("!4s4sHH",
-                         inet_pton(socket.AF_INET, u.src),
-                         inet_pton(socket.AF_INET, u.dst),
-                         proto,
-                         ln)
+        ln = plen
+
+    # Filter out IPOption_LSRR and IPOption_SSRR
+    sr_options = [opt for opt in u.options if isinstance(opt, IPOption_LSRR) or
+                  isinstance(opt, IPOption_SSRR)]
+    len_sr_options = len(sr_options)
+    if len_sr_options == 1 and len(sr_options[0].routers):
+        # The checksum must be computed using the final
+        # destination address
+        u.dst = sr_options[0].routers[-1]
+    elif len_sr_options > 1:
+        message = "Found %d Source Routing Options! "
+        message += "Falling back to IP.dst for checksum computation."
+        warning(message, len_sr_options)
+
+    return struct.pack("!4s4sHH",
+                       inet_pton(socket.AF_INET, u.src),
+                       inet_pton(socket.AF_INET, u.dst),
+                       proto,
+                       ln)
+
+
+def in4_chksum(proto, u, p):
+    # type: (int, IP, bytes) -> int
+    """IPv4 Pseudo Header checksum as defined in RFC793
+
+    :param nh: value of upper layer protocol
+    :param u: upper layer instance
+    :param p: the payload of the upper layer provided as a string
+    """
+    if not isinstance(u, IP):
+        warning("No IP underlayer to compute checksum. Leaving null.")
+        return 0
+    psdhdr = in4_pseudoheader(proto, u, len(p))
     return checksum(psdhdr + p)
+
+
+def _is_ipv6_layer(p):
+    # type: (Packet) -> bytes
+    return (isinstance(p, scapy.layers.inet6.IPv6) or
+            isinstance(p, scapy.layers.inet6._IPv6ExtHdr))
+
+
+def tcp_pseudoheader(tcp):
+    # type: (TCP) -> bytes
+    """Pseudoheader of a TCP packet as bytes
+
+    Requires underlayer to be either IP or IPv6
+    """
+    if isinstance(tcp.underlayer, IP):
+        plen = len(bytes(tcp))
+        return in4_pseudoheader(socket.IPPROTO_TCP, tcp.underlayer, plen)
+    elif conf.ipv6_enabled and _is_ipv6_layer(tcp.underlayer):
+        plen = len(bytes(tcp))
+        return raw(scapy.layers.inet6.in6_pseudoheader(
+            socket.IPPROTO_TCP, tcp.underlayer, plen))
+    else:
+        raise ValueError("TCP packet does not have IP or IPv6 underlayer")
+
+
+def calc_tcp_md5_hash(tcp, key):
+    # type: (TCP, bytes) -> bytes
+    """Calculate TCP-MD5 hash from packet and return a 16-byte string"""
+    import hashlib
+
+    h = hashlib.md5()  # nosec
+    tcp_bytes = bytes(tcp)
+    h.update(tcp_pseudoheader(tcp))
+    h.update(tcp_bytes[:16])
+    h.update(b"\x00\x00")
+    h.update(tcp_bytes[18:])
+    h.update(key)
+
+    return h.digest()
+
+
+def sign_tcp_md5(tcp, key):
+    # type: (TCP, bytes) -> None
+    """Append TCP-MD5 signature to tcp packet"""
+    sig = calc_tcp_md5_hash(tcp, key)
+    tcp.options = tcp.options + [('MD5', sig)]
 
 
 class TCP(Packet):
@@ -666,7 +782,9 @@ class TCP(Packet):
                 ck = scapy.layers.inet6.in6_chksum(socket.IPPROTO_TCP, self.underlayer, p)  # noqa: E501
                 p = p[:16] + struct.pack("!H", ck) + p[18:]
             else:
-                warning("No IP underlayer to compute checksum. Leaving null.")
+                log_runtime.info(
+                    "No IP underlayer to compute checksum. Leaving null."
+                )
         return p
 
     def hashret(self):
@@ -742,7 +860,9 @@ class UDP(Packet):
                     ck = 0xFFFF
                 p = p[:6] + struct.pack("!H", ck) + p[8:]
             else:
-                warning("No IP underlayer to compute checksum. Leaving null.")
+                log_runtime.info(
+                    "No IP underlayer to compute checksum. Leaving null."
+                )
         return p
 
     def extract_padding(self, s):
@@ -828,13 +948,16 @@ icmpcodes = {3: {0: "network-unreachable",
                   5: "need-authorization", }, }
 
 
+icmp_id_seq_types = [0, 8, 13, 14, 15, 16, 17, 18, 37, 38]
+
+
 class ICMP(Packet):
     name = "ICMP"
     fields_desc = [ByteEnumField("type", 8, icmptypes),
                    MultiEnumField("code", 0, icmpcodes, depends_on=lambda pkt:pkt.type, fmt="B"),  # noqa: E501
                    XShortField("chksum", None),
-                   ConditionalField(XShortField("id", 0), lambda pkt:pkt.type in [0, 8, 13, 14, 15, 16, 17, 18]),  # noqa: E501
-                   ConditionalField(XShortField("seq", 0), lambda pkt:pkt.type in [0, 8, 13, 14, 15, 16, 17, 18]),  # noqa: E501
+                   ConditionalField(XShortField("id", 0), lambda pkt:pkt.type in icmp_id_seq_types),  # noqa: E501
+                   ConditionalField(XShortField("seq", 0), lambda pkt:pkt.type in icmp_id_seq_types),  # noqa: E501
                    ConditionalField(ICMPTimeStampField("ts_ori", None), lambda pkt:pkt.type in [13, 14]),  # noqa: E501
                    ConditionalField(ICMPTimeStampField("ts_rx", None), lambda pkt:pkt.type in [13, 14]),  # noqa: E501
                    ConditionalField(ICMPTimeStampField("ts_tx", None), lambda pkt:pkt.type in [13, 14]),  # noqa: E501
@@ -844,8 +967,15 @@ class ICMP(Packet):
                    ConditionalField(ByteField("length", 0), lambda pkt:pkt.type in [3, 11, 12]),  # noqa: E501
                    ConditionalField(IPField("addr_mask", "0.0.0.0"), lambda pkt:pkt.type in [17, 18]),  # noqa: E501
                    ConditionalField(ShortField("nexthopmtu", 0), lambda pkt:pkt.type == 3),  # noqa: E501
-                   ConditionalField(ShortField("unused", 0), lambda pkt:pkt.type in [11, 12]),  # noqa: E501
-                   ConditionalField(IntField("unused", 0), lambda pkt:pkt.type not in [0, 3, 5, 8, 11, 12, 13, 14, 15, 16, 17, 18])  # noqa: E501
+                   MultipleTypeField(
+                       [
+                           (ShortField("unused", 0),
+                               lambda pkt:pkt.type in [11, 12]),
+                           (IntField("unused", 0),
+                               lambda pkt:pkt.type not in [0, 3, 5, 8, 11, 12,
+                                                           13, 14, 15, 16, 17,
+                                                           18])
+                       ], StrFixedLenField("unused", "", length=0)),
                    ]
 
     def post_build(self, p, pay):
@@ -856,7 +986,7 @@ class ICMP(Packet):
         return p
 
     def hashret(self):
-        if self.type in [0, 8, 13, 14, 15, 16, 17, 18, 33, 34, 35, 36, 37, 38]:
+        if self.type in icmp_id_seq_types:
             return struct.pack("HH", self.id, self.seq) + self.payload.hashret()  # noqa: E501
         return self.payload.hashret()
 
@@ -1017,9 +1147,9 @@ def fragment(pkt, fragsize=1480):
         nb = (len(s) - lastfragsz + fragsize - 1) // fragsize + 1
         for i in range(nb):
             q = p.copy()
-            del(q[IP].payload)
-            del(q[IP].chksum)
-            del(q[IP].len)
+            del q[IP].payload
+            del q[IP].chksum
+            del q[IP].len
             if i != nb - 1:
                 q[IP].flags |= 1
                 fragend = (i + 1) * fragsize
@@ -1045,7 +1175,7 @@ overlap_fragsize: the fragment size of the overlapping packet"""
     if overlap_fragsize is None:
         overlap_fragsize = fragsize
     q = p.copy()
-    del(q[IP].payload)
+    del q[IP].payload
     q[IP].add_payload(overlap)
 
     qfrag = fragment(q, overlap_fragsize)
@@ -1062,32 +1192,32 @@ def _defrag_list(lst, defrag, missfrag):
         return
     p = p.copy()
     if conf.padding_layer in p:
-        del(p[conf.padding_layer].underlayer.payload)
+        del p[conf.padding_layer].underlayer.payload
     ip = p[IP]
     if ip.len is None or ip.ihl is None:
-        clen = len(ip.payload)
+        c_len = len(ip.payload)
     else:
-        clen = ip.len - (ip.ihl << 2)
+        c_len = ip.len - (ip.ihl << 2)
     txt = conf.raw_layer()
     for q in lst[1:]:
-        if clen != q.frag << 3:  # Wrong fragmentation offset
-            if clen > q.frag << 3:
-                warning("Fragment overlap (%i > %i) %r || %r ||  %r" % (clen, q.frag << 3, p, txt, q))  # noqa: E501
+        if c_len != q.frag << 3:  # Wrong fragmentation offset
+            if c_len > q.frag << 3:
+                warning("Fragment overlap (%i > %i) %r || %r ||  %r" % (c_len, q.frag << 3, p, txt, q))  # noqa: E501
             missfrag.extend(lst)
             break
         if q[IP].len is None or q[IP].ihl is None:
-            clen += len(q[IP].payload)
+            c_len += len(q[IP].payload)
         else:
-            clen += q[IP].len - (q[IP].ihl << 2)
+            c_len += q[IP].len - (q[IP].ihl << 2)
         if conf.padding_layer in q:
-            del(q[conf.padding_layer].underlayer.payload)
+            del q[conf.padding_layer].underlayer.payload
         txt.add_payload(q[IP].payload.copy())
         if q.time > p.time:
             p.time = q.time
     else:
         ip.flags.MF = False
-        del(ip.chksum)
-        del(ip.len)
+        del ip.chksum
+        del ip.len
         p = p / txt
         p._defrag_pos = max(x._defrag_pos for x in lst)
         defrag.append(p)
@@ -1151,6 +1281,13 @@ def defragment(plist):
 # Add timeskew_graph() method to PacketList
 def _packetlist_timeskew_graph(self, ip, **kargs):
     """Tries to graph the timeskew between the timestamps and real time for a given ip"""  # noqa: E501
+    # Defer imports of matplotlib until its needed
+    # because it has a heavy dep chain
+    from scapy.libs.matplot import (
+        plt,
+        MATPLOTLIB_INLINED,
+        MATPLOTLIB_DEFAULT_PLOT_KARGS
+    )
 
     # Filter TCP segments which source address is 'ip'
     tmp = (self._elt2pkt(x) for x in self.res)
@@ -1197,7 +1334,7 @@ def _packetlist_timeskew_graph(self, ip, **kargs):
     return lines
 
 
-PacketList.timeskew_graph = _packetlist_timeskew_graph
+_PacketList.timeskew_graph = _packetlist_timeskew_graph
 
 
 # Create a new packet list
@@ -1253,7 +1390,7 @@ class TracerouteResult(SndRcvList):
             p.join()
 
     def trace3D_notebook(self):
-        """Same than trace3D, used when ran from Jupyther notebooks"""
+        """Same than trace3D, used when ran from Jupyter notebooks"""
         trace = self.get_trace()
         import vpython
 
@@ -1403,35 +1540,48 @@ Touch screen: pinch/extend to zoom, swipe or two-finger rotate."""
 
         # Check that the geoip2 module can be imported
         # Doc: http://geoip2.readthedocs.io/en/latest/
+        from scapy.libs.matplot import plt, MATPLOTLIB, MATPLOTLIB_INLINED
+
         try:
             # GeoIP2 modules need to be imported as below
             import geoip2.database
             import geoip2.errors
         except ImportError:
-            warning("Cannot import geoip2. Won't be able to plot the world.")
+            log_runtime.error(
+                "Cannot import geoip2. Won't be able to plot the world."
+            )
             return []
         # Check availability of database
         if not conf.geoip_city:
-            warning("Cannot import the geolite2 CITY database.\n"
-                    "Download it from http://dev.maxmind.com/geoip/geoip2/geolite2/"  # noqa: E501
-                    " then set its path to conf.geoip_city")
+            log_runtime.error(
+                "Cannot import the geolite2 CITY database.\n"
+                "Download it from http://dev.maxmind.com/geoip/geoip2/geolite2/"  # noqa: E501
+                " then set its path to conf.geoip_city"
+            )
             return []
         # Check availability of plotting devices
         try:
             import cartopy.crs as ccrs
         except ImportError:
-            warning("Cannot import cartopy.\n"
-                    "More infos on http://scitools.org.uk/cartopy/docs/latest/installing.html")  # noqa: E501
+            log_runtime.error(
+                "Cannot import cartopy.\n"
+                "More infos on http://scitools.org.uk/cartopy/docs/latest/installing.html"  # noqa: E501
+            )
             return []
         if not MATPLOTLIB:
-            warning("Matplotlib is not installed. Won't be able to plot the world.")  # noqa: E501
+            log_runtime.error(
+                "Matplotlib is not installed. Won't be able to plot the world."
+            )
             return []
 
         # Open & read the GeoListIP2 database
         try:
             db = geoip2.database.Reader(conf.geoip_city)
         except Exception:
-            warning("Cannot open geoip2 database at %s", conf.geoip_city)
+            log_runtime.error(
+                "Cannot open geoip2 database at %s",
+                conf.geoip_city
+            )
             return []
 
         # Regroup results per trace
@@ -1741,6 +1891,7 @@ class TCP_client(Automaton):
     :param ip: the ip to connect to
     :param port:
     """
+
     def parse_args(self, ip, port, *args, **kargs):
         from scapy.sessions import TCPSession
         self.dst = str(Net(ip))
@@ -1790,6 +1941,14 @@ class TCP_client(Automaton):
 
     @ATMT.state(final=1)
     def CLOSED(self):
+        pass
+
+    @ATMT.state(stop=1)
+    def STOP(self):
+        pass
+
+    @ATMT.state()
+    def STOP_SENT_FIN_ACK(self):
         pass
 
     @ATMT.condition(START)
@@ -1862,6 +2021,35 @@ class TCP_client(Automaton):
         if pkt[TCP].flags.A:
             raise self.CLOSED()
 
+    @ATMT.condition(STOP)
+    def stop_requested(self):
+        raise self.STOP_SENT_FIN_ACK()
+
+    @ATMT.action(stop_requested)
+    def stop_send_finack(self):
+        self.l4[TCP].flags = "FA"
+        self.send(self.l4)
+        self.l4[TCP].seq += 1
+
+    @ATMT.receive_condition(STOP_SENT_FIN_ACK)
+    def stop_fin_received(self, pkt):
+        if pkt[TCP].flags.F:
+            raise self.CLOSED().action_parameters(pkt)
+
+    @ATMT.action(stop_fin_received)
+    def stop_send_ack(self, pkt):
+        self.l4[TCP].flags = "A"
+        self.l4[TCP].ack = pkt[TCP].seq + 1
+        self.send(self.l4)
+
+    @ATMT.timeout(SYN_SENT, 1)
+    def syn_ack_timeout(self):
+        raise self.CLOSED()
+
+    @ATMT.timeout(STOP_SENT_FIN_ACK, 1)
+    def stop_ack_timeout(self):
+        raise self.CLOSED()
+
 
 #####################
 #  Reporting stuff  #
@@ -1904,7 +2092,7 @@ funcpres: a function used to summarize packets"""
     classes += [t[1] for t in zip(idlst[:-1], idlst[1:]) if abs(t[0] - t[1]) > 50]  # noqa: E501
     lst = [(funcID(x), funcpres(x)) for x in lst]
     lst.sort()
-    print("Probably %i classes:" % len(classes), classes)
+    print("Probably %i classes: %s" % (len(classes), classes))
     for id, pr in lst:
         print("%5i" % id, pr)
 
@@ -1972,6 +2160,31 @@ def fragleak2(target, timeout=0.4, onlyasc=0, count=None):
                     linehexdump(leak, onlyasc=onlyasc)
     except Exception:
         pass
+
+
+class ICMPEcho_am(AnsweringMachine):
+    """Responds to ICMP Echo-Requests (ping)"""
+    function_name = "icmpechod"
+
+    def is_request(self, req):
+        if req.haslayer(ICMP):
+            icmp_req = req.getlayer(ICMP)
+            if icmp_req.type == 8:  # echo-request
+                return True
+
+        return False
+
+    def print_reply(self, req, reply):
+        print("Replying %s to %s" % (reply.getlayer(IP).dst, req.dst))
+
+    def make_reply(self, req):
+        reply = IP(dst=req[IP].src) / ICMP()
+        reply[ICMP].type = 0  # echo-reply
+        reply[ICMP].seq = req[ICMP].seq
+        reply[ICMP].id = req[ICMP].id
+        # Force re-generation of the checksum
+        reply[ICMP].chksum = None
+        return reply
 
 
 conf.stats_classic_protocols += [TCP, UDP, ICMP]

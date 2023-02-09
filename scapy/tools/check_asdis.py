@@ -1,3 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# This file is part of Scapy
+# See https://scapy.net/ for more information
+# Copyright (C) Philippe Biondi <phil@secdev.org>
+
 from __future__ import print_function
 import getopt
 
@@ -19,14 +24,14 @@ def main(argv):
     VERBOSE = 0
     try:
         opts = getopt.getopt(argv, "hi:o:azdv")
-        for opt, parm in opts[0]:
+        for opt, param in opts[0]:
             if opt == "-h":
                 usage()
                 raise SystemExit
             elif opt == "-i":
-                PCAP_IN = parm
+                PCAP_IN = param
             elif opt == "-o":
-                PCAP_OUT = parm
+                PCAP_OUT = param
             elif opt == "-v":
                 VERBOSE += 1
             elif opt == "-d":

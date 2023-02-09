@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# This file is part of Scapy
+# See https://scapy.net/ for more information
+
 # scapy.contrib.description = TaZmen Sniffer Protocol (TZSP)
 # scapy.contrib.status = loads
 
@@ -6,17 +10,6 @@
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     :author:    Thomas Tannhaeuser, hecke@naberius.de
-    :license:   GPLv2
-
-        This module is free software; you can redistribute it and/or
-        modify it under the terms of the GNU General Public License
-        as published by the Free Software Foundation; either version 2
-        of the License, or (at your option) any later version.
-
-        This module is distributed in the hope that it will be useful,
-        but WITHOUT ANY WARRANTY; without even the implied warranty of
-        MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-        GNU General Public License for more details.
 
     :description:
 
@@ -111,7 +104,8 @@ class TZSP(Packet):
     def guess_payload_class(self, payload):
         if self.type == TZSP.TYPE_KEEPALIVE:
             if len(payload):
-                warning('payload (%i bytes) in KEEPALIVE/NULL packet' % len(payload))  # noqa: E501
+                warning('payload (%i bytes) in KEEPALIVE/NULL packet',
+                        len(payload))
             return Raw
         else:
             return _tzsp_guess_next_tag(payload)
@@ -133,17 +127,19 @@ def _tzsp_handle_unknown_tag(payload, tag_type):
     payload_len = len(payload)
 
     if payload_len < 2:
-        warning('invalid or unknown tag type (%i) and too short packet - treat remaining data as Raw' % tag_type)  # noqa: E501
+        warning('invalid or unknown tag type (%i) and too short packet - '
+                'treat remaining data as Raw', tag_type)
         return Raw
 
     tag_data_length = orb(payload[1])
 
     tag_data_fits_in_payload = (tag_data_length + 2) <= payload_len
     if not tag_data_fits_in_payload:
-        warning('invalid or unknown tag type (%i) and too short packet - treat remaining data as Raw' % tag_type)  # noqa: E501
+        warning('invalid or unknown tag type (%i) and too short packet - '
+                'treat remaining data as Raw', tag_type)
         return Raw
 
-    warning('invalid or unknown tag type (%i)' % tag_type)
+    warning('invalid or unknown tag type (%i)', tag_type)
 
     return TZSPTagUnknown
 
@@ -175,13 +171,13 @@ def _tzsp_guess_next_tag(payload):
         length = None
 
     if not length:
-        warning('no tag length given - packet to short')
+        warning('no tag length given - packet too short')
         return Raw
 
     try:
         return tag_class_definition[length]
     except KeyError:
-        warning('invalid tag length {} for tag type {}'.format(length, tag_type))  # noqa: E501
+        warning('invalid tag length %s for tag type %s', length, tag_type)
         return Raw
 
 

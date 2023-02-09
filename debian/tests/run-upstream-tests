@@ -1,0 +1,21 @@
+#!/bin/sh
+
+set -e
+
+cp -a -r ../src $AUTOPKGTEST_TMP
+
+cd $AUTOPKGTEST_TMP/src
+
+./test/run_tests -c test/configs/linux.utsc -K tcpdump \
+                                            -K manufdb \
+                                            -K wireshark \
+                                            -K ci_only \
+                                            -K vcan_socket \
+                                            -K automotive_comm \
+                                            -K imports \
+                                            -K scanner \
+                                            -K netaccess \
+                                            -K root \
+                                            -K tshark \
+                                            -K brotli \
+                                            -K zstd

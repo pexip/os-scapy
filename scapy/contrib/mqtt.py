@@ -1,7 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Santiago Hernandez Ramos <shramos@protonmail.com>
-# This program is published under GPLv2 license
 
 # scapy.contrib.description = Message Queuing Telemetry Transport (MQTT)
 # scapy.contrib.status = loads
@@ -158,6 +158,11 @@ class MQTTConnect(Packet):
     ]
 
 
+class MQTTDisconnect(Packet):
+    name = "MQTT disconnect"
+    fields_desc = []
+
+
 RETURN_CODE = {
     0: 'Connection Accepted',
     1: 'Unacceptable protocol version',
@@ -187,8 +192,9 @@ class MQTTPublish(Packet):
                          lambda pkt: (pkt.underlayer.QOS == 1 or
                                       pkt.underlayer.QOS == 2)),
         StrLenField("value", "",
-                    length_from=lambda pkt: (pkt.underlayer.len -
-                                             pkt.length - 2)),
+                    length_from=lambda pkt: pkt.underlayer.len - pkt.length - 2
+                    if pkt.underlayer.QOS == 0 else
+                    pkt.underlayer.len - pkt.length - 4)
     ]
 
 
@@ -239,7 +245,7 @@ class MQTTSubscribe(Packet):
     name = "MQTT subscribe"
     fields_desc = [
         ShortField("msgid", None),
-        PacketListField("topics", [], cls=MQTTTopicQOS)
+        PacketListField("topics", [], pkt_cls=MQTTTopicQOS)
     ]
 
 
@@ -263,7 +269,7 @@ class MQTTUnsubscribe(Packet):
     name = "MQTT unsubscribe"
     fields_desc = [
         ShortField("msgid", None),
-        PacketListField("topics", [], cls=MQTTTopic)
+        PacketListField("topics", [], pkt_cls=MQTTTopic)
     ]
 
 
@@ -289,6 +295,7 @@ bind_layers(MQTT, MQTTSubscribe, type=8)
 bind_layers(MQTT, MQTTSuback, type=9)
 bind_layers(MQTT, MQTTUnsubscribe, type=10)
 bind_layers(MQTT, MQTTUnsuback, type=11)
+bind_layers(MQTT, MQTTDisconnect, type=14)
 bind_layers(MQTTConnect, MQTT)
 bind_layers(MQTTConnack, MQTT)
 bind_layers(MQTTPublish, MQTT)
@@ -300,3 +307,4 @@ bind_layers(MQTTSubscribe, MQTT)
 bind_layers(MQTTSuback, MQTT)
 bind_layers(MQTTUnsubscribe, MQTT)
 bind_layers(MQTTUnsuback, MQTT)
+bind_layers(MQTTDisconnect, MQTT)

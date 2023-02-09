@@ -1,8 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Philippe Biondi <phil@secdev.org>
 # Copyright (C) 6WIND <olivier.matz@6wind.com>
-# This program is published under a GPLv2 license
 
 """
 VRRP (Virtual Router Redundancy Protocol).
@@ -82,7 +82,8 @@ class VRRPv3(Packet):
             elif isinstance(self.underlayer, IPv6):
                 ck = in6_chksum(112, self.underlayer, p)
             else:
-                warning("No IP(v6) layer to compute checksum on VRRP. Leaving null")  # noqa: E501
+                warning("No IP(v6) layer to compute checksum on VRRP. "
+                        "Leaving null")
                 ck = 0
             p = p[:6] + chb(ck >> 8) + chb(ck & 0xff) + p[8:]
         return p

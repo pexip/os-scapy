@@ -1,0 +1,56 @@
+Description: remove failing tests
+  The upstream source code comes from upstream tarball in Debian and it's not
+  a git repo. These tests assume we're in a git repo and consequently fail.
+Author: Carlos Henrique Lima Melara <charlesmelara@outlook.com>
+Bug: https://github.com/secdev/scapy/issues/3847
+Last-Update: 2023-01-21
+
+--- a/test/regression.uts
++++ b/test/regression.uts
+@@ -44,22 +44,6 @@ assert not _version_checker(FakeModule2, (5, 143, 4))
+ 
+ assert _version_checker(FakeModule3, (2, 4, 2))
+ 
+-= Check Scapy version
+-
+-import mock
+-
+-import scapy
+-from scapy import _parse_tag, _version_from_git_describe
+-from scapy.config import _version_checker
+-
+-b = Bunch(returncode=0, communicate=lambda *args, **kargs: (b"v2.4.5rc1-261-g44b98e14", None))
+-with mock.patch('scapy.subprocess.Popen', return_value=b) as popen:
+-    class GitModuleScapy(object):
+-        __version__ = _version_from_git_describe()
+-
+-assert GitModuleScapy.__version__ == '2.4.5rc1.dev261'
+-assert _version_checker(GitModuleScapy, (2, 4, 5))
+-
+ = List layers
+ ~ conf command
+ ls()
+@@ -4759,23 +4743,6 @@ assert pl[1][Ether].dst == '00:22:33:44:55:66'
+ ############
+ + Scapy version
+ 
+-= _version()
+-
+-import os
+-version_filename = os.path.join(scapy._SCAPY_PKG_DIR, "VERSION")
+-
+-version = "2.0.0"
+-with open(version_filename, "w") as fd:
+-    fd.write(version)
+-
+-import mock
+-with mock.patch("scapy._version_from_git_describe") as version_mocked:
+-    version_mocked.side_effect = Exception()
+-    assert scapy._version() == version
+-    os.unlink(version_filename)
+-    assert scapy._version() == "unknown.version"
+-
+-
+ = UTscapy HTML output
+ 
+ import tempfile, os

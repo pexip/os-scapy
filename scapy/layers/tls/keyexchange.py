@@ -1,8 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
+# See https://scapy.net/ for more information
 # Copyright (C) 2007, 2008, 2009 Arnaud Ebalard
 #               2015, 2016, 2017 Maxence Tury
 #               2019 Romain Perez
-# This program is published under a GPLv2 license
 
 """
 TLS key exchange logic.
@@ -35,6 +36,10 @@ from scapy.layers.tls.crypto.groups import (
 if conf.crypto_valid:
     from cryptography.hazmat.backends import default_backend
     from cryptography.hazmat.primitives.asymmetric import dh, ec
+    from cryptography.hazmat.primitives import serialization
+if conf.crypto_valid_advanced:
+    from cryptography.hazmat.primitives.asymmetric import x25519
+    from cryptography.hazmat.primitives.asymmetric import x448
 
 
 ###############################################################################
@@ -227,9 +232,9 @@ class _TLSSignatureField(PacketField):
     """
     __slots__ = ["length_from"]
 
-    def __init__(self, name, default, length_from=None, remain=0):
+    def __init__(self, name, default, length_from=None):
         self.length_from = length_from
-        PacketField.__init__(self, name, default, _TLSSignature, remain=remain)
+        PacketField.__init__(self, name, default, _TLSSignature)
 
     def m2i(self, pkt, m):
         tmp_len = self.length_from(pkt)
@@ -262,9 +267,9 @@ class _TLSServerParamsField(PacketField):
     """
     __slots__ = ["length_from"]
 
-    def __init__(self, name, default, length_from=None, remain=0):
+    def __init__(self, name, default, length_from=None):
         self.length_from = length_from
-        PacketField.__init__(self, name, default, None, remain=remain)
+        PacketField.__init__(self, name, default, None)
 
     def m2i(self, pkt, m):
         s = pkt.tls_session
@@ -452,10 +457,10 @@ class _ECBasisTypeField(ByteEnumField):
 class _ECBasisField(PacketField):
     __slots__ = ["clsdict", "basis_type_from"]
 
-    def __init__(self, name, default, basis_type_from, clsdict, remain=0):
+    def __init__(self, name, default, basis_type_from, clsdict):
         self.clsdict = clsdict
         self.basis_type_from = basis_type_from
-        PacketField.__init__(self, name, default, None, remain=remain)
+        PacketField.__init__(self, name, default, None)
 
     def m2i(self, pkt, m):
         basis = self.basis_type_from(pkt)
@@ -742,8 +747,12 @@ class ClientDiffieHellmanPublic(_GenericTLSSessionInheritance):
 
         if s.client_kx_privkey and s.server_kx_pubkey:
             pms = s.client_kx_privkey.exchange(s.server_kx_pubkey)
-            s.pre_master_secret = pms
-            s.compute_ms_and_derive_keys()
+            s.pre_master_secret = pms.lstrip(b"\x00")
+            if not s.extms or s.session_hash:
+                # If extms is set (extended master secret), the key will
+                # need the session hash to be computed. This is provided
+                # by the TLSClientKeyExchange. Same in all occurrences
+                s.compute_ms_and_derive_keys()
 
     def post_build(self, pkt, pay):
         if not self.dh_Yc:
@@ -772,8 +781,9 @@ class ClientDiffieHellmanPublic(_GenericTLSSessionInheritance):
 
         if s.server_kx_privkey and s.client_kx_pubkey:
             ZZ = s.server_kx_privkey.exchange(s.client_kx_pubkey)
-            s.pre_master_secret = ZZ
-            s.compute_ms_and_derive_keys()
+            s.pre_master_secret = ZZ.lstrip(b"\x00")
+            if not s.extms or s.session_hash:
+                s.compute_ms_and_derive_keys()
 
     def guess_payload_class(self, p):
         return Padding
@@ -795,17 +805,32 @@ class ClientECDiffieHellmanPublic(_GenericTLSSessionInheritance):
         s.client_kx_privkey = _tls_named_groups_generate(
             s.client_kx_ecdh_params
         )
+        # ecdh_Yc follows ECPoint.point format as defined in
+        # https://tools.ietf.org/html/rfc8422#section-5.4
         pubkey = s.client_kx_privkey.public_key()
-        x = pubkey.public_numbers().x
-        y = pubkey.public_numbers().y
-        self.ecdh_Yc = (b"\x04" +
-                        pkcs_i2osp(x, pubkey.key_size // 8) +
-                        pkcs_i2osp(y, pubkey.key_size // 8))
+        if isinstance(pubkey, (x25519.X25519PublicKey,
+                               x448.X448PublicKey)):
+            self.ecdh_Yc = pubkey.public_bytes(
+                serialization.Encoding.Raw,
+                serialization.PublicFormat.Raw
+            )
+            if s.client_kx_privkey and s.server_kx_pubkey:
+                pms = s.client_kx_privkey.exchange(s.server_kx_pubkey)
+        else:
+            # uncompressed format of an elliptic curve point
+            x = pubkey.public_numbers().x
+            y = pubkey.public_numbers().y
+            self.ecdh_Yc = (b"\x04" +
+                            pkcs_i2osp(x, pubkey.key_size // 8) +
+                            pkcs_i2osp(y, pubkey.key_size // 8))
+            if s.client_kx_privkey and s.server_kx_pubkey:
+                pms = s.client_kx_privkey.exchange(ec.ECDH(),
+                                                   s.server_kx_pubkey)
 
         if s.client_kx_privkey and s.server_kx_pubkey:
-            pms = s.client_kx_privkey.exchange(ec.ECDH(), s.server_kx_pubkey)
             s.pre_master_secret = pms
-            s.compute_ms_and_derive_keys()
+            if not s.extms or s.session_hash:
+                s.compute_ms_and_derive_keys()
 
     def post_build(self, pkt, pay):
         if not self.ecdh_Yc:
@@ -830,7 +855,8 @@ class ClientECDiffieHellmanPublic(_GenericTLSSessionInheritance):
         if s.server_kx_privkey and s.client_kx_pubkey:
             ZZ = s.server_kx_privkey.exchange(ec.ECDH(), s.client_kx_pubkey)
             s.pre_master_secret = ZZ
-            s.compute_ms_and_derive_keys()
+            if not s.extms or s.session_hash:
+                s.compute_ms_and_derive_keys()
 
 
 # RSA Encryption (standard & export)
@@ -893,7 +919,8 @@ class EncryptedPreMasterSecret(_GenericTLSSessionInheritance):
             warning(err)
 
         s.pre_master_secret = pms
-        s.compute_ms_and_derive_keys()
+        if not s.extms or s.session_hash:
+            s.compute_ms_and_derive_keys()
 
         return pms
 
@@ -908,7 +935,8 @@ class EncryptedPreMasterSecret(_GenericTLSSessionInheritance):
 
         s = self.tls_session
         s.pre_master_secret = enc
-        s.compute_ms_and_derive_keys()
+        if not s.extms or s.session_hash:
+            s.compute_ms_and_derive_keys()
 
         if s.server_tmp_rsa_key is not None:
             enc = s.server_tmp_rsa_key.encrypt(pkt, t="pkcs")

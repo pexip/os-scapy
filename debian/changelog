@@ -1,3 +1,86 @@
+scapy (2.5.0+dfsg-2) unstable; urgency=medium
+
+  * Team upload.
+  * Upload to unstable.
+  * debian/patches/fix-endianness-in-utf-16-encoding.patch: remove patch.
+  * debian/tests/control: disable tests in 32 bits and big endian archs
+    (closes: #1030602).
+
+ -- Carlos Henrique Lima Melara <charlesmelara@outlook.com>  Thu, 09 Feb 2023 19:34:45 -0300
+
+scapy (2.5.0+dfsg-2~exp1) experimental; urgency=medium
+
+  * Team upload.
+  * debian/patches/:
+      - Remove-resource-heavy-ISOTP-test.patch: add to fix autopkgtest in 32
+        bits architectures.
+      - fix-endianness-in-utf-16-encoding.patch: add to fix tests in s390x
+        architecture.
+
+ -- Carlos Henrique Lima Melara <charlesmelara@outlook.com>  Tue, 31 Jan 2023 16:27:18 -0300
+
+scapy (2.5.0+dfsg-1) unstable; urgency=medium
+
+  * Team upload.
+  * New upstream version 2.5.0+dfsg. (Closes: #1027183)
+  * Remove python-scapy-doc binary package due to DFSG infringement.
+  * Run wrap-and-sort.
+  * debian/control:
+      - Add libpcap0.8 to Recommends.
+      - Add netbase to Depends.
+      - Bump Standards-Version to 4.6.2 - no changes needed.
+      - Move tcpdump from Recommends to Suggests.
+      - Remove python-scapy-doc stanza and sphinx related packages
+        from Build-Depends.
+  * debian/copyright: full update.
+  * debian/dirs: remove - not needed anymore.
+  * debian/lintian-overrides: override lintian hits.
+  * debian/patches/:
+      - Remove-privacy-breach-in-doc.patch: remove. Merged upstream.
+      - fix-typo-in-manpage.patch: add to fix typo.
+      - remove-UTscapy-script.patch: remove. Merged upstream.
+      - remove-failing-tests.patch: add to remove failing tests from
+        upstream.
+  * debian/python-scapy-doc.doc-base: remove.
+  * debian/python-scapy-doc.docs: remove.
+  * debian/rules: remove documentation/sphinx related rules.
+  * debian/tests/*: add upstream testing, but only a reduced set.
+  * debian/watch: update to use github api.
+
+ -- Carlos Henrique Lima Melara <charlesmelara@outlook.com>  Wed, 25 Jan 2023 19:01:55 -0300
+
+scapy (2.4.5+g9420c22-2) unstable; urgency=medium
+
+  * Team upload.
+  * Source only upload of new binary pkg
+  * Update Standards Version (no changes)
+
+ -- Neil Williams <codehelp@debian.org>  Fri, 19 Aug 2022 08:23:54 +0100
+
+scapy (2.4.5+g9420c22-1) unstable; urgency=medium
+
+  * Team upload.
+  * New upstream release, adding changes from commit 9420c22 to 2.4.5
+    to fix licensing mistake in previous releases.
+  * Split out documentation into a separate package.
+  * Drop use of upstream unit tests in autopkgtest due to flaky results
+    (Closes: #1012438)
+  * Drop patches included upstream. (Closes: #589995) (Closes: #594261)
+  * Update d.copyright
+
+ -- Neil Williams <codehelp@debian.org>  Mon, 15 Aug 2022 10:23:25 +0100
+
+scapy (2.4.4-5) unstable; urgency=medium
+
+  * Team upload.
+  * Lintian brush updates
+  * Fix d.watch file
+  * Add can-utils package to autopkgtest dependencies. (Closes: #1014488)
+  * Add the basic Python autopkgtest
+  * Freshen existing patches
+
+ -- Neil Williams <codehelp@debian.org>  Tue, 09 Aug 2022 13:11:48 +0100
+
 scapy (2.4.4-4) unstable; urgency=medium
 
   * Team upload.

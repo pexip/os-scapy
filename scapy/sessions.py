@@ -1,27 +1,49 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
-# Copyright (C) Philippe Biondi <phil@secdev.org>
-# This program is published under a GPLv2 license
+# See https://scapy.net/ for more information
 
 """
 Sessions: decode flow of packets when sniffing
 """
 
 from collections import defaultdict
-from scapy.compat import raw
+import socket
+import struct
+
+from scapy.compat import raw, orb
 from scapy.config import conf
-from scapy.packet import NoPayload
+from scapy.packet import NoPayload, Packet
 from scapy.plist import PacketList
+from scapy.pton_ntop import inet_pton
+
+# Typing imports
+from scapy.compat import (
+    Any,
+    Callable,
+    DefaultDict,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    cast
+)
 
 
 class DefaultSession(object):
     """Default session: no stream decoding"""
 
-    def __init__(self, prn=None, store=False, supersession=None,
-                 *args, **karg):
+    def __init__(
+            self,
+            prn=None,  # type: Optional[Callable[[Packet], Any]]
+            store=False,  # type: bool
+            supersession=None,  # type: Optional[DefaultSession]
+            *args,  # type: Any
+            **karg  # type: Any
+    ):
+        # type: (...) -> None
         self.__prn = prn
         self.__store = store
-        self.lst = []
+        self.lst = []  # type: List[Packet]
         self.__count = 0
         self._supersession = supersession
         if self._supersession:
@@ -32,10 +54,12 @@ class DefaultSession(object):
 
     @property
     def store(self):
+        # type: () -> bool
         return self.__store
 
     @store.setter
     def store(self, val):
+        # type: (bool) -> None
         if self._supersession:
             self._supersession.store = val
         else:
@@ -43,10 +67,12 @@ class DefaultSession(object):
 
     @property
     def prn(self):
+        # type: () -> Optional[Callable[[Packet], Any]]
         return self.__prn
 
     @prn.setter
     def prn(self, f):
+        # type: (Optional[Any]) -> None
         if self._supersession:
             self._supersession.prn = f
         else:
@@ -54,27 +80,28 @@ class DefaultSession(object):
 
     @property
     def count(self):
+        # type: () -> int
         if self._supersession:
             return self._supersession.count
         else:
             return self.__count
 
     def toPacketList(self):
+        # type: () -> PacketList
         if self._supersession:
             return PacketList(self._supersession.lst, "Sniffed")
         else:
             return PacketList(self.lst, "Sniffed")
 
     def on_packet_received(self, pkt):
+        # type: (Optional[Packet]) -> None
         """DEV: entry point. Will be called by sniff() for each
         received packet (that passes the filters).
         """
         if not pkt:
             return
-        if isinstance(pkt, list):
-            for p in pkt:
-                DefaultSession.on_packet_received(self, p)
-            return
+        if not isinstance(pkt, Packet):
+            raise TypeError("Only provide a Packet.")
         self.__count += 1
         if self.store:
             self.lst.append(pkt)
@@ -92,10 +119,12 @@ class IPSession(DefaultSession):
     """
 
     def __init__(self, *args, **kwargs):
+        # type: (*Any, **Any) -> None
         DefaultSession.__init__(self, *args, **kwargs)
-        self.fragments = defaultdict(list)
+        self.fragments = defaultdict(list)  # type: DefaultDict[Tuple[Any, ...], List[Packet]]  # noqa: E501
 
     def _ip_process_packet(self, packet):
+        # type: (Packet) -> Optional[Packet]
         from scapy.layers.inet import _defrag_list, IP
         if IP not in packet:
             return packet
@@ -108,21 +137,25 @@ class IPSession(DefaultSession):
                 try:
                     if self.fragments[uniq][0].frag == 0:
                         # Has first fragment (otherwise ignore)
-                        defrag, missfrag = [], []
-                        _defrag_list(self.fragments[uniq], defrag, missfrag)
+                        defrag = []  # type: List[Packet]
+                        _defrag_list(self.fragments[uniq], defrag, [])
                         defragmented_packet = defrag[0]
                         defragmented_packet = defragmented_packet.__class__(
                             raw(defragmented_packet)
                         )
+                        defragmented_packet.time = packet.time
                         return defragmented_packet
                 finally:
                     del self.fragments[uniq]
+            return None
         else:
             return packet
 
     def on_packet_received(self, pkt):
-        pkt = self._ip_process_packet(pkt)
-        DefaultSession.on_packet_received(self, pkt)
+        # type: (Optional[Packet]) -> None
+        if not pkt:
+            return None
+        super(IPSession, self).on_packet_received(self._ip_process_packet(pkt))
 
 
 class StringBuffer(object):
@@ -136,12 +169,15 @@ class StringBuffer(object):
     If a TCP fragment is missed, this class will fill the missing space with
     zeros.
     """
+
     def __init__(self):
+        # type: () -> None
         self.content = bytearray(b"")
         self.content_len = 0
-        self.incomplete = []
+        self.incomplete = []  # type: List[Tuple[int, int]]
 
     def append(self, data, seq):
+        # type: (bytes, int) -> None
         data_len = len(data)
         seq = seq - 1
         if seq + data_len > self.content_len:
@@ -157,23 +193,31 @@ class StringBuffer(object):
         memoryview(self.content)[seq:seq + data_len] = data
 
     def full(self):
+        # type: () -> bool
         # Should only be true when all missing data was filled up,
         # (or there never was missing data)
         return True  # XXX
 
     def clear(self):
-        self.__init__()
+        # type: () -> None
+        self.__init__()  # type: ignore
 
     def __bool__(self):
+        # type: () -> bool
         return bool(self.content_len)
     __nonzero__ = __bool__
 
     def __len__(self):
+        # type: () -> int
         return self.content_len
 
     def __bytes__(self):
+        # type: () -> bytes
         return bytes(self.content)
-    __str__ = __bytes__
+
+    def __str__(self):
+        # type: () -> str
+        return cast(str, self.__bytes__())
 
 
 class TCPSession(IPSession):
@@ -183,9 +227,12 @@ class TCPSession(IPSession):
     DEV: implement a class-function `tcp_reassemble` in your Packet class::
 
         @classmethod
-        def tcp_reassemble(cls, data, metadata):
+        def tcp_reassemble(cls, data, metadata, session):
             # data = the reassembled data from the same request/flow
             # metadata = empty dictionary, that can be used to store data
+            #            during TCP reassembly
+            # session = a dictionary proper to the bidirectional TCP session,
+            #           that can be used to store anything
             [...]
             # If the packet is available, return it. Otherwise don't.
             # Whenever you return a packet, the buffer will be discarded.
@@ -202,23 +249,42 @@ class TCPSession(IPSession):
                 TCP socket. Default to False
     """
 
-    fmt = ('TCP {IP:%IP.src%}{IPv6:%IPv6.src%}:%r,TCP.sport% > ' +
-           '{IP:%IP.dst%}{IPv6:%IPv6.dst%}:%r,TCP.dport%')
-
     def __init__(self, app=False, *args, **kwargs):
+        # type: (bool, *Any, **Any) -> None
         super(TCPSession, self).__init__(*args, **kwargs)
         self.app = app
         if app:
             self.data = b""
-            self.metadata = {}
+            self.metadata = {}  # type: Dict[str, Any]
+            self.session = {}  # type: Dict[str, Any]
         else:
             # The StringBuffer() is used to build a global
             # string from fragments and their seq nulber
             self.tcp_frags = defaultdict(
                 lambda: (StringBuffer(), {})
-            )
+            )  # type: DefaultDict[bytes, Tuple[StringBuffer, Dict[str, Any]]]
+            self.tcp_sessions = defaultdict(
+                dict
+            )  # type: DefaultDict[bytes, Dict[str, Any]]
+
+    def _get_ident(self, pkt, session=False):
+        # type: (Packet, bool) -> bytes
+        underlayer = pkt["TCP"].underlayer
+        af = socket.AF_INET6 if "IPv6" in pkt else socket.AF_INET
+        src = underlayer and inet_pton(af, underlayer.src) or b""
+        dst = underlayer and inet_pton(af, underlayer.dst) or b""
+        if session:
+            # Bidirectional
+            def xor(x, y):
+                # type: (bytes, bytes) -> bytes
+                return bytes(orb(a) ^ orb(b) for a, b in zip(x, y))
+            return struct.pack("!4sH", xor(src, dst), pkt.dport ^ pkt.sport)
+        else:
+            # Uni-directional
+            return src + dst + struct.pack("!HH", pkt.dport, pkt.sport)
 
     def _process_packet(self, pkt):
+        # type: (Packet) -> Optional[Packet]
         """Process each packet: matches the TCP seq/ack numbers
         to follow the TCP streams, and orders the fragments.
         """
@@ -230,12 +296,12 @@ class TCPSession(IPSession):
                 # when a packet ends.
                 return pkt
             self.data += bytes(pkt)
-            pkt = pay_class.tcp_reassemble(self.data, self.metadata)
+            pkt = pay_class.tcp_reassemble(self.data, self.metadata, self.session)
             if pkt:
                 self.data = b""
                 self.metadata = {}
                 return pkt
-            return
+            return None
 
         from scapy.layers.inet import IP, TCP
         if not pkt or TCP not in pkt:
@@ -244,10 +310,11 @@ class TCPSession(IPSession):
         if isinstance(pay, (NoPayload, conf.padding_layer)):
             return pkt
         new_data = pay.original
-        # Match packets by a uniqute TCP identifier
+        # Match packets by a unique TCP identifier
         seq = pkt[TCP].seq
-        ident = pkt.sprintf(self.fmt)
+        ident = self._get_ident(pkt)
         data, metadata = self.tcp_frags[ident]
+        tcp_session = self.tcp_sessions[self._get_ident(pkt, True)]
         # Let's guess which class is going to be used
         if "pay_class" not in metadata:
             pay_class = pay.__class__
@@ -261,6 +328,8 @@ class TCPSession(IPSession):
             metadata["tcp_reassemble"] = tcp_reassemble
         else:
             tcp_reassemble = metadata["tcp_reassemble"]
+        if "seq" not in metadata:
+            metadata["seq"] = seq
         # Get a relative sequence number for a storage purpose
         relative_seq = metadata.get("relative_seq", None)
         if relative_seq is None:
@@ -279,28 +348,41 @@ class TCPSession(IPSession):
             metadata["tcp_psh"] = True
         # XXX TODO: check that no empty space is missing in the buffer.
         # XXX Currently, if a TCP fragment was missing, we won't notice it.
-        packet = None
+        packet = None  # type: Optional[Packet]
         if data.full():
             # Reassemble using all previous packets
-            packet = tcp_reassemble(bytes(data), metadata)
+            packet = tcp_reassemble(bytes(data), metadata, tcp_session)
         # Stack the result on top of the previous frames
         if packet:
+            if "seq" in metadata:
+                pkt[TCP].seq = metadata["seq"]
+            # Clear buffer
             data.clear()
+            # Clear TCP reassembly metadata
             metadata.clear()
             del self.tcp_frags[ident]
+            # Rebuild resulting packet
             pay.underlayer.remove_payload()
             if IP in pkt:
                 pkt[IP].len = None
                 pkt[IP].chksum = None
-            return pkt / packet
+            pkt = pkt / packet
+            pkt.wirelen = None
+            return pkt
+        return None
 
     def on_packet_received(self, pkt):
+        # type: (Optional[Packet]) -> None
         """Hook to the Sessions API: entry point of the dissection.
         This will defragment IP if necessary, then process to
         TCP reassembly.
         """
+        if not pkt:
+            return None
         # First, defragment IP if necessary
         pkt = self._ip_process_packet(pkt)
+        if not pkt:
+            return None
         # Now handle TCP reassembly
         pkt = self._process_packet(pkt)
         DefaultSession.on_packet_received(self, pkt)

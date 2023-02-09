@@ -1,11 +1,10 @@
-# This program is published under a GPLv2 license
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Ryan Speers <ryan@rmspeers.com> 2011-2012
 # Copyright (C) Roger Meyer <roger.meyer@csus.edu>: 2012-03-10 Added frames
-# Copyright (C) Gabriel Potter <gabriel@potter.fr>: 2018
-# Copyright (C) 2020 Dimitrios-Georgios Akestoridis <akestoridis@cmu.edu>
-# This program is published under a GPLv2 license
+# Copyright (C) Gabriel Potter <gabriel[]potter[]fr>: 2018
+# Copyright (C) 2020-2021 Dimitrios-Georgios Akestoridis <akestoridis@cmu.edu>
 
 """
 ZigBee bindings for IEEE 802.15.4.
@@ -24,6 +23,18 @@ from scapy.layers.dot15d4 import dot15d4AddressField, Dot15d4Beacon, Dot15d4, \
     Dot15d4FCS
 from scapy.layers.inet import UDP
 from scapy.layers.ntp import TimeStampField
+
+
+# APS Profile Identifiers
+_aps_profile_identifiers = {
+    0x0000: "Zigbee_Device_Profile",
+    0x0101: "IPM_Industrial_Plant_Monitoring",
+    0x0104: "HA_Home_Automation",
+    0x0105: "CBA_Commercial_Building_Automation",
+    0x0107: "TA_Telecom_Applications",
+    0x0108: "HC_Health_Care",
+    0x0109: "SE_Smart_Energy_Profile",
+}
 
 # ZigBee Cluster Library Identifiers, Table 2.2 ZCL
 _zcl_cluster_identifier = {
@@ -109,22 +120,11 @@ _zcl_cluster_identifier = {
     0x0800: "key_establishment",
 }
 
-# ZigBee stack profiles
-_zcl_profile_identifier = {
-    0x0000: "ZigBee_Stack_Profile_1",
-    0x0101: "IPM_Industrial_Plant_Monitoring",
-    0x0104: "HA_Home_Automation",
-    0x0105: "CBA_Commercial_Building_Automation",
-    0x0107: "TA_Telecom_Applications",
-    0x0108: "HC_Health_Care",
-    0x0109: "SE_Smart_Energy_Profile",
-}
-
 # ZigBee Cluster Library, Table 2.8 ZCL Command Frames
 _zcl_command_frames = {
     0x00: "read_attributes",
     0x01: "read_attributes_response",
-    0x02: "write_attributes_response",
+    0x02: "write_attributes",
     0x03: "write_attributes_undivided",
     0x04: "write_attributes_response",
     0x05: "write_attributes_no_response",
@@ -136,14 +136,25 @@ _zcl_command_frames = {
     0x0b: "default_response",
     0x0c: "discover_attributes",
     0x0d: "discover_attributes_response",
-    # 0x0e - 0xff Reserved
+    0x0e: "read_attributes_structured",
+    0x0f: "write_attributes_structured",
+    0x10: "write_attributes_structured_response",
+    0x11: "discover_commands_received",
+    0x12: "discover_commands_received_response",
+    0x13: "discover_commands_generated",
+    0x14: "discover_commands_generated_response",
+    0x15: "discover_attributes_extended",
+    0x16: "discover_attributes_extended_response",
+    # 0x17 - 0xff Reserved
 }
 
 # ZigBee Cluster Library, Table 2.16 Enumerated Status Values
 _zcl_enumerated_status_values = {
     0x00: "SUCCESS",
-    0x02: "FAILURE",
-    # 0x02 - 0x7f Reserved
+    0x01: "FAILURE",
+    # 0x02 - 0x7d Reserved
+    0x7e: "NOT_AUTHORIZED",
+    0x7f: "RESERVED_FIELD_NOT_ZERO",
     0x80: "MALFORMED_COMMAND",
     0x81: "UNSUP_CLUSTER_COMMAND",
     0x82: "UNSUP_GENERAL_COMMAND",
@@ -158,11 +169,25 @@ _zcl_enumerated_status_values = {
     0x8b: "NOT_FOUND",
     0x8c: "UNREPORTABLE_ATTRIBUTE",
     0x8d: "INVALID_DATA_TYPE",
-    # 0x8e - 0xbf Reserved
+    0x8e: "INVALID_SELECTOR",
+    0x8f: "WRITE_ONLY",
+    0x90: "INCONSISTENT_STARTUP_STATE",
+    0x91: "DEFINED_OUT_OF_BAND",
+    0x92: "INCONSISTENT",
+    0x93: "ACTION_DENIED",
+    0x94: "TIMEOUT",
+    0x95: "ABORT",
+    0x96: "INVALID_IMAGE",
+    0x97: "WAIT_FOR_DATA",
+    0x98: "NO_IMAGE_AVAILABLE",
+    0x99: "REQUIRE_MORE_IMAGE",
+    0x9a: "NOTIFICATION_PENDING",
+    # 0x9b - 0xbf Reserved
     0xc0: "HARDWARE_FAILURE",
     0xc1: "SOFTWARE_FAILURE",
     0xc2: "CALIBRATION_ERROR",
-    # 0xc3 - 0xff Reserved
+    0xc3: "UNSUPPORTED_CLUSTER",
+    # 0xc4 - 0xff Reserved
 }
 
 # ZigBee Cluster Library, Table 2.15 Data Types
@@ -239,6 +264,34 @@ _zcl_attribute_data_types = {
     0xff: "unknown",
 }
 
+# Zigbee Cluster Library, IAS Zone, Enroll Response Codes
+_zcl_ias_zone_enroll_response_codes = {
+    0x00: "Success",
+    0x01: "Not supported",
+    0x02: "No enroll permit",
+    0x03: "Too many zones",
+}
+
+# Zigbee Cluster Library, IAS Zone, Zone Types
+_zcl_ias_zone_zone_types = {
+    0x0000: "Standard CIE",
+    0x000d: "Motion sensor",
+    0x0015: "Contact switch",
+    0x0028: "Fire sensor",
+    0x002a: "Water sensor",
+    0x002b: "Carbon Monoxide (CO) sensor",
+    0x002c: "Personal emergency device",
+    0x002d: "Vibration/Movement sensor",
+    0x010f: "Remote Control",
+    0x0115: "Key fob",
+    0x021d: "Keypad",
+    0x0225: "Standard Warning Device",
+    0x0226: "Glass break sensor",
+    0x0229: "Security repeater",
+    # 0x8000 - 0xfffe Manufacturer-specific types
+    0xffff: "Invalid Zone Type",
+}
+
 
 # ZigBee #
 
@@ -247,7 +300,8 @@ class ZigbeeNWK(Packet):
     fields_desc = [
         BitField("discover_route", 0, 2),
         BitField("proto_version", 2, 4),
-        BitEnumField("frametype", 0, 2, {0: 'data', 1: 'command'}),
+        BitEnumField("frametype", 0, 2,
+                     {0: 'data', 1: 'command', 3: 'Inter-PAN'}),
         FlagsField("flags", 0, 8, ['multicast', 'security', 'source_route', 'extended_dst', 'extended_src', 'reserved1', 'reserved2', 'reserved3']),  # noqa: E501
         XLEShortField("destination", 0),
         XLEShortField("source", 0),
@@ -264,8 +318,16 @@ class ZigbeeNWK(Packet):
         ConditionalField(FieldListField("relays", [], XLEShortField("", 0x0000), count_from=lambda pkt:pkt.relay_count), lambda pkt:pkt.flags & 0x04),  # noqa: E501
     ]
 
+    @classmethod
+    def dispatch_hook(cls, _pkt=None, *args, **kargs):
+        if _pkt and len(_pkt) >= 2:
+            frametype = ord(_pkt[:1]) & 3
+            if frametype == 3:
+                return ZigbeeNWKStub
+        return cls
+
     def guess_payload_class(self, payload):
-        if self.flags & 0x02:
+        if self.flags.security:
             return ZigbeeSecurityHeader
         elif self.frametype == 0:
             return ZigbeeAppDataPayload
@@ -313,45 +375,29 @@ class ZigbeeNWKCommandPayload(Packet):
 
         # - Route Request Command - #
         # Command options (1 octet)
-        ConditionalField(BitField("reserved", 0, 1), lambda pkt: pkt.cmd_identifier == 1),  # noqa: E501
-        ConditionalField(BitField("multicast", 0, 1), lambda pkt: pkt.cmd_identifier == 1),  # noqa: E501
+        ConditionalField(BitField("res1", 0, 1),
+                         lambda pkt: pkt.cmd_identifier in [1, 2]),
+        ConditionalField(BitField("multicast", 0, 1),
+                         lambda pkt: pkt.cmd_identifier in [1, 2]),
         ConditionalField(BitField("dest_addr_bit", 0, 1), lambda pkt: pkt.cmd_identifier == 1),  # noqa: E501
         ConditionalField(
             BitEnumField("many_to_one", 0, 2, {
                 0: "not_m2one", 1: "m2one_support_rrt", 2: "m2one_no_support_rrt", 3: "reserved"}  # noqa: E501
             ), lambda pkt: pkt.cmd_identifier == 1),
-        ConditionalField(BitField("reserved", 0, 3), lambda pkt: pkt.cmd_identifier == 1),  # noqa: E501
-        # Route request identifier (1 octet)
-        ConditionalField(ByteField("route_request_identifier", 0), lambda pkt: pkt.cmd_identifier == 1),  # noqa: E501
-        # Destination address (2 octets)
-        ConditionalField(XLEShortField("destination_address", 0x0000), lambda pkt: pkt.cmd_identifier == 1),  # noqa: E501
-        # Path cost (1 octet)
-        ConditionalField(ByteField("path_cost", 0), lambda pkt: pkt.cmd_identifier == 1),  # noqa: E501
-        # Destination IEEE Address (0/8 octets), only present when dest_addr_bit has a value of 1  # noqa: E501
-        ConditionalField(dot15d4AddressField("ext_dst", 0, adjust=lambda pkt, x: 8),  # noqa: E501
-                         lambda pkt: (pkt.cmd_identifier == 1 and pkt.dest_addr_bit == 1)),  # noqa: E501
+        ConditionalField(BitField("res2", 0, 3), lambda pkt: pkt.cmd_identifier == 1),  # noqa: E501
 
         # - Route Reply Command - #
         # Command options (1 octet)
-        ConditionalField(BitField("reserved", 0, 1), lambda pkt: pkt.cmd_identifier == 2),  # noqa: E501
-        ConditionalField(BitField("multicast", 0, 1), lambda pkt: pkt.cmd_identifier == 2),  # noqa: E501
         ConditionalField(BitField("responder_addr_bit", 0, 1), lambda pkt: pkt.cmd_identifier == 2),  # noqa: E501
         ConditionalField(BitField("originator_addr_bit", 0, 1), lambda pkt: pkt.cmd_identifier == 2),  # noqa: E501
-        ConditionalField(BitField("reserved", 0, 4), lambda pkt: pkt.cmd_identifier == 2),  # noqa: E501
+        ConditionalField(BitField("res3", 0, 4), lambda pkt: pkt.cmd_identifier == 2),  # noqa: E501
         # Route request identifier (1 octet)
-        ConditionalField(ByteField("route_request_identifier", 0), lambda pkt: pkt.cmd_identifier == 2),  # noqa: E501
+        ConditionalField(ByteField("route_request_identifier", 0),
+                         lambda pkt: pkt.cmd_identifier in [1, 2]),  # noqa: E501
         # Originator address (2 octets)
         ConditionalField(XLEShortField("originator_address", 0x0000), lambda pkt: pkt.cmd_identifier == 2),  # noqa: E501
         # Responder address (2 octets)
         ConditionalField(XLEShortField("responder_address", 0x0000), lambda pkt: pkt.cmd_identifier == 2),  # noqa: E501
-        # Path cost (1 octet)
-        ConditionalField(ByteField("path_cost", 0), lambda pkt: pkt.cmd_identifier == 2),  # noqa: E501
-        # Originator IEEE address (0/8 octets)
-        ConditionalField(dot15d4AddressField("originator_addr", 0, adjust=lambda pkt, x: 8),  # noqa: E501
-                         lambda pkt: (pkt.cmd_identifier == 2 and pkt.originator_addr_bit == 1)),  # noqa: E501
-        # Responder IEEE address (0/8 octets)
-        ConditionalField(dot15d4AddressField("responder_addr", 0, adjust=lambda pkt, x: 8),  # noqa: E501
-                         lambda pkt: (pkt.cmd_identifier == 2 and pkt.responder_addr_bit == 1)),  # noqa: E501
 
         # - Network Status Command - #
         # Status code (1 octet)
@@ -378,7 +424,20 @@ class ZigbeeNWKCommandPayload(Packet):
             # 0x13 - 0xff Reserved
         }), lambda pkt: pkt.cmd_identifier == 3),
         # Destination address (2 octets)
-        ConditionalField(XLEShortField("destination_address", 0x0000), lambda pkt: pkt.cmd_identifier == 3),  # noqa: E501
+        ConditionalField(XLEShortField("destination_address", 0x0000),
+                         lambda pkt: pkt.cmd_identifier in [1, 3]),
+        # Path cost (1 octet)
+        ConditionalField(ByteField("path_cost", 0),
+                         lambda pkt: pkt.cmd_identifier in [1, 2]),  # noqa: E501
+        # Destination IEEE Address (0/8 octets), only present when dest_addr_bit has a value of 1  # noqa: E501
+        ConditionalField(dot15d4AddressField("ext_dst", 0, adjust=lambda pkt, x: 8),  # noqa: E501
+                         lambda pkt: (pkt.cmd_identifier == 1 and pkt.dest_addr_bit == 1)),  # noqa: E501
+        # Originator IEEE address (0/8 octets)
+        ConditionalField(dot15d4AddressField("originator_addr", 0, adjust=lambda pkt, x: 8),  # noqa: E501
+                         lambda pkt: (pkt.cmd_identifier == 2 and pkt.originator_addr_bit == 1)),  # noqa: E501
+        # Responder IEEE address (0/8 octets)
+        ConditionalField(dot15d4AddressField("responder_addr", 0, adjust=lambda pkt, x: 8),  # noqa: E501
+                         lambda pkt: (pkt.cmd_identifier == 2 and pkt.responder_addr_bit == 1)),  # noqa: E501
 
         # - Leave Command - #
         # Command options (1 octet)
@@ -389,7 +448,7 @@ class ZigbeeNWKCommandPayload(Packet):
         # Bit 5: Rejoin
         ConditionalField(BitField("rejoin", 0, 1), lambda pkt: pkt.cmd_identifier == 4),  # noqa: E501
         # Bit 0 - 4: Reserved
-        ConditionalField(BitField("reserved", 0, 5), lambda pkt: pkt.cmd_identifier == 4),  # noqa: E501
+        ConditionalField(BitField("res4", 0, 5), lambda pkt: pkt.cmd_identifier == 4),  # noqa: E501
 
         # - Route Record Command - #
         # Relay count (1 octet)
@@ -418,7 +477,7 @@ class ZigbeeNWKCommandPayload(Packet):
 
         # - Link Status Command - #
         # Command options (1 octet)
-        ConditionalField(BitField("reserved", 0, 1), lambda pkt:pkt.cmd_identifier == 8),  # Reserved  # noqa: E501
+        ConditionalField(BitField("res5", 0, 1), lambda pkt:pkt.cmd_identifier == 8),  # Reserved  # noqa: E501
         ConditionalField(BitField("last_frame", 0, 1), lambda pkt:pkt.cmd_identifier == 8),  # Last frame  # noqa: E501
         ConditionalField(BitField("first_frame", 0, 1), lambda pkt:pkt.cmd_identifier == 8),  # First frame  # noqa: E501
         ConditionalField(BitField("entry_count", 0, 5), lambda pkt:pkt.cmd_identifier == 8),  # Entry count  # noqa: E501
@@ -433,15 +492,6 @@ class ZigbeeNWKCommandPayload(Packet):
             BitEnumField("report_command_identifier", 0, 3, {0: "PAN identifier conflict"}),  # 0x01 - 0x07 Reserved  # noqa: E501
             lambda pkt: pkt.cmd_identifier == 9),
         ConditionalField(BitField("report_information_count", 0, 5), lambda pkt: pkt.cmd_identifier == 9),  # noqa: E501
-        # EPID: Extended PAN ID (8 octets)
-        ConditionalField(dot15d4AddressField("epid", 0, adjust=lambda pkt, x: 8), lambda pkt: pkt.cmd_identifier == 9),  # noqa: E501
-        # Report information (variable length)
-        # Only present if we have a PAN Identifier Conflict Report
-        ConditionalField(
-            FieldListField("PAN_ID_conflict_report", [], XLEShortField("", 0x0000),  # noqa: E501
-                           count_from=lambda pkt:pkt.report_information_count),
-            lambda pkt:(pkt.cmd_identifier == 9 and pkt.report_command_identifier == 0)  # noqa: E501
-        ),
 
         # - Network Update Command - #
         # Command options (1 octet)
@@ -450,7 +500,17 @@ class ZigbeeNWKCommandPayload(Packet):
             lambda pkt: pkt.cmd_identifier == 10),
         ConditionalField(BitField("update_information_count", 0, 5), lambda pkt: pkt.cmd_identifier == 10),  # noqa: E501
         # EPID: Extended PAN ID (8 octets)
-        ConditionalField(dot15d4AddressField("epid", 0, adjust=lambda pkt, x: 8), lambda pkt: pkt.cmd_identifier == 10),  # noqa: E501
+        ConditionalField(
+            dot15d4AddressField("epid", 0, adjust=lambda pkt, x: 8),
+            lambda pkt: pkt.cmd_identifier in [9, 10]
+        ),
+        # Report information (variable length)
+        # Only present if we have a PAN Identifier Conflict Report
+        ConditionalField(
+            FieldListField("PAN_ID_conflict_report", [], XLEShortField("", 0x0000),  # noqa: E501
+                           count_from=lambda pkt:pkt.report_information_count),
+            lambda pkt:(pkt.cmd_identifier == 9 and pkt.report_command_identifier == 0)  # noqa: E501
+        ),
         # Update Id (1 octet)
         ConditionalField(ByteField("update_id", 0), lambda pkt: pkt.cmd_identifier == 10),  # noqa: E501
         # Update Information (Variable)
@@ -495,7 +555,7 @@ class ZigbeeNWKCommandPayload(Packet):
             lambda pkt: pkt.cmd_identifier == 12),
         # Parent Information (1 octet)
         ConditionalField(
-            BitField("reserved", 0, 6),
+            BitField("res6", 0, 6),
             lambda pkt: pkt.cmd_identifier == 12),
         ConditionalField(
             BitField("ed_timeout_req_keepalive", 0, 1),
@@ -603,14 +663,14 @@ class ZigbeeAppDataPayload(Packet):
         # Cluster identifier (0/2 octets)
         ConditionalField(
             # unsigned short (little-endian)
-            EnumField("cluster", 0, _zcl_cluster_identifier, fmt="<H"),
+            XLEShortField("cluster", 0x0000),
             lambda pkt: ((pkt.aps_frametype == 0) or
                          (pkt.aps_frametype == 2 and not
                           pkt.frame_control.ack_format))
         ),
         # Profile identifier (0/2 octets)
         ConditionalField(
-            EnumField("profile", 0, _zcl_profile_identifier, fmt="<H"),
+            EnumField("profile", 0, _aps_profile_identifiers, fmt="<H"),
             lambda pkt: ((pkt.aps_frametype == 0) or
                          (pkt.aps_frametype == 2 and not
                           pkt.frame_control.ack_format))
@@ -731,10 +791,18 @@ class ZigbeeAppCommandPayload(Packet):
                          lambda pkt: pkt.cmd_identifier in [1, 2, 3, 4]),
         ConditionalField(StrFixedLenField("data", 0, length=16),
                          lambda pkt: pkt.cmd_identifier in [1, 2, 3, 4]),
-        # Transport-key Command
+        # Confirm-key command
+        ConditionalField(
+            ByteEnumField("status", 0, _ApsStatusValues),
+            lambda pkt: pkt.cmd_identifier == 16),
+        # Common fields
         ConditionalField(
             ByteEnumField("key_type", 0, _TransportKeyKeyTypes),
-            lambda pkt: pkt.cmd_identifier == 5),
+            lambda pkt: pkt.cmd_identifier in [5, 8, 15, 16]),
+        ConditionalField(dot15d4AddressField("address", 0,
+                                             adjust=lambda pkt, x: 8),
+                         lambda pkt: pkt.cmd_identifier in [6, 7, 15, 16]),
+        # Transport-key Command
         ConditionalField(
             StrFixedLenField("key", None, 16),
             lambda pkt: pkt.cmd_identifier == 5),
@@ -744,50 +812,35 @@ class ZigbeeAppCommandPayload(Packet):
                          pkt.key_type in [0x01, 0x05])),
         ConditionalField(
             dot15d4AddressField("dest_addr", 0, adjust=lambda pkt, x: 8),
-            lambda pkt: (pkt.cmd_identifier == 5 and
-                         pkt.key_type not in [0x02, 0x03])),
+            lambda pkt: ((pkt.cmd_identifier == 5 and
+                         pkt.key_type not in [0x02, 0x03]) or
+                         pkt.cmd_identifier == 14)),
         ConditionalField(
             dot15d4AddressField("src_addr", 0, adjust=lambda pkt, x: 8),
             lambda pkt: (pkt.cmd_identifier == 5 and
                          pkt.key_type not in [0x02, 0x03])),
         ConditionalField(
             dot15d4AddressField("partner_addr", 0, adjust=lambda pkt, x: 8),
-            lambda pkt: (pkt.cmd_identifier == 5 and
-                         pkt.key_type in [0x02, 0x03])),
+            lambda pkt: ((pkt.cmd_identifier == 5 and
+                         pkt.key_type in [0x02, 0x03]) or
+                         (pkt.cmd_identifier == 8 and pkt.key_type == 0x02))),
         ConditionalField(
             ByteField("initiator_flag", 0),
             lambda pkt: (pkt.cmd_identifier == 5 and
                          pkt.key_type in [0x02, 0x03])),
         # Update-Device Command
-        ConditionalField(dot15d4AddressField("address", 0,
-                                             adjust=lambda pkt, x: 8),
-                         lambda pkt: pkt.cmd_identifier == 6),
         ConditionalField(XLEShortField("short_address", 0),
                          lambda pkt: pkt.cmd_identifier == 6),
-        ConditionalField(ByteField("status", 0),
+        ConditionalField(ByteField("update_status", 0),
                          lambda pkt: pkt.cmd_identifier == 6),
-        # Remove-Device Command
-        ConditionalField(dot15d4AddressField("address", 0,
-                                             adjust=lambda pkt, x: 8),
-                         lambda pkt: pkt.cmd_identifier == 7),
-        # Request-Key Command
-        ConditionalField(
-            ByteEnumField("key_type", 0, _RequestKeyKeyTypes),
-            lambda pkt: pkt.cmd_identifier == 8),
-        ConditionalField(
-            dot15d4AddressField("partner_addr", 0, adjust=lambda pkt, x: 8),
-            lambda pkt: (pkt.cmd_identifier == 8 and pkt.key_type == 0x02)),
         # Switch-Key Command
         ConditionalField(StrFixedLenField("seqnum", None, 8),
                          lambda pkt: pkt.cmd_identifier == 9),
         # Un-implemented: 10-13 (+?)
-        ConditionalField(StrField("data", ""),
+        ConditionalField(StrField("unimplemented", ""),
                          lambda pkt: (pkt.cmd_identifier >= 10 and
                                       pkt.cmd_identifier <= 13)),
         # Tunnel Command
-        ConditionalField(
-            dot15d4AddressField("dest_addr", 0, adjust=lambda pkt, x: 8),
-            lambda pkt: pkt.cmd_identifier == 14),
         ConditionalField(
             FlagsField("frame_control", 2, 4, [
                 "ack_format",
@@ -816,24 +869,8 @@ class ZigbeeAppCommandPayload(Packet):
             lambda pkt: pkt.cmd_identifier == 14),
         # Verify-Key Command
         ConditionalField(
-            ByteEnumField("key_type", 0, _TransportKeyKeyTypes),
-            lambda pkt: pkt.cmd_identifier == 15),
-        ConditionalField(
-            dot15d4AddressField("address", 0, adjust=lambda pkt, x: 8),
-            lambda pkt: pkt.cmd_identifier == 15),
-        ConditionalField(
             StrFixedLenField("key_hash", None, 16),
             lambda pkt: pkt.cmd_identifier == 15),
-        # Confirm-Key Command
-        ConditionalField(
-            ByteEnumField("status", 0, _ApsStatusValues),
-            lambda pkt: pkt.cmd_identifier == 16),
-        ConditionalField(
-            ByteEnumField("key_type", 0, _TransportKeyKeyTypes),
-            lambda pkt: pkt.cmd_identifier == 16),
-        ConditionalField(
-            dot15d4AddressField("address", 0, adjust=lambda pkt, x: 8),
-            lambda pkt: pkt.cmd_identifier == 16)
     ]
 
     def guess_payload_class(self, payload):
@@ -876,10 +913,10 @@ class ZigbeeNWKStub(Packet):
     name = "Zigbee Network Layer for Inter-PAN Transmission"
     fields_desc = [
         # NWK frame control
-        BitField("reserved", 0, 2),  # remaining subfields shall have a value of 0  # noqa: E501
+        BitField("res1", 0, 2),  # remaining subfields shall have a value of 0  # noqa: E501
         BitField("proto_version", 2, 4),
         BitField("frametype", 0b11, 2),  # 0b11 (3) is a reserved frame type
-        BitField("reserved", 0, 8),  # remaining subfields shall have a value of 0  # noqa: E501
+        BitField("res2", 0, 8),  # remaining subfields shall have a value of 0  # noqa: E501
     ]
 
     def guess_payload_class(self, payload):
@@ -901,9 +938,9 @@ class ZigbeeAppDataPayloadStub(Packet):
             lambda pkt: pkt.getfieldval("delivery_mode") == 0b11
         ),
         # Cluster identifier
-        EnumField("cluster", 0, _zcl_cluster_identifier, fmt="<H"),  # unsigned short (little-endian)  # noqa: E501
+        XLEShortField("cluster", 0x0000),
         # Profile identifier
-        EnumField("profile", 0, _zcl_profile_identifier, fmt="<H"),
+        EnumField("profile", 0, _aps_profile_identifiers, fmt="<H"),
         # ZigBee Payload
         ConditionalField(
             StrField("data", ""),
@@ -915,14 +952,46 @@ class ZigbeeAppDataPayloadStub(Packet):
 # Zigbee Device Profile #
 
 
+class ZDPActiveEPReq(Packet):
+    name = "ZDP Transaction Data: Active_EP_req"
+    fields_desc = [
+        # NWK Address (2 octets)
+        XLEShortField("nwk_addr", 0),
+    ]
+
+
+class ZDPDeviceAnnce(Packet):
+    name = "ZDP Transaction Data: Device_annce"
+    fields_desc = [
+        # NWK Address (2 octets)
+        XLEShortField("nwk_addr", 0),
+        # IEEE Address (8 octets)
+        dot15d4AddressField("ieee_addr", 0, adjust=lambda pkt, x: 8),
+        # Capability Information (1 octet)
+        BitField("allocate_address", 0, 1),
+        BitField("security_capability", 0, 1),
+        BitField("reserved2", 0, 1),
+        BitField("reserved1", 0, 1),
+        BitField("receiver_on_when_idle", 0, 1),
+        BitField("power_source", 0, 1),
+        BitField("device_type", 0, 1),
+        BitField("alternate_pan_coordinator", 0, 1),
+    ]
+
+
 class ZigbeeDeviceProfile(Packet):
     name = "Zigbee Device Profile (ZDP) Frame"
     fields_desc = [
         # Transaction Sequence Number (1 octet)
         ByteField("trans_seqnum", 0),
-
-        # TODO: Transaction Data (variable)
     ]
+
+    def guess_payload_class(self, payload):
+        if self.underlayer.cluster == 0x0005:
+            return ZDPActiveEPReq
+        elif self.underlayer.cluster == 0x0013:
+            return ZDPDeviceAnnce
+        return Packet.guess_payload_class(self, payload)
 
 
 # ZigBee Cluster Library #
@@ -1024,6 +1093,111 @@ class ZCLReadAttributeStatusRecord(Packet):
         return "", s
 
 
+class ZCLWriteAttributeRecord(Packet):
+    name = "ZCL Write Attribute Record"
+    fields_desc = [
+        # Attribute Identifier (2 octets)
+        XLEShortField("attribute_identifier", 0),
+        # Attribute Data Type (1 octet)
+        ByteEnumField("attribute_data_type", 0, _zcl_attribute_data_types),
+        # Attribute Data (variable)
+        _DiscreteString("attribute_data", ""),
+    ]
+
+    def extract_padding(self, s):
+        return "", s
+
+
+class ZCLWriteAttributeStatusRecord(Packet):
+    name = "ZCL Write Attribute Status Record"
+    fields_desc = [
+        # Status (1 octet)
+        ByteEnumField("status", 0, _zcl_enumerated_status_values),
+        # Attribute Identifier (0/2 octets)
+        ConditionalField(
+            XLEShortField("attribute_identifier", 0),
+            lambda pkt:pkt.status != 0x00
+        ),
+    ]
+
+    def extract_padding(self, s):
+        return "", s
+
+
+class ZCLConfigureReportingRecord(Packet):
+    name = "ZCL Configure Reporting Record"
+    fields_desc = [
+        # Direction (1 octet)
+        ByteField("attribute_direction", 0),
+        # Attribute Identifier (2 octets)
+        XLEShortField("attribute_identifier", 0),
+        # Attribute Data Type (0/1 octet)
+        ConditionalField(
+            ByteEnumField("attribute_data_type", 0, _zcl_attribute_data_types),
+            lambda pkt:pkt.attribute_direction == 0x00
+        ),
+        # Minimum Reporting Interval (0/2 octets)
+        ConditionalField(
+            XLEShortField("min_reporting_interval", 0),
+            lambda pkt:pkt.attribute_direction == 0x00
+        ),
+        # Maximum Reporting Interval (0/2 octets)
+        ConditionalField(
+            XLEShortField("max_reporting_interval", 0),
+            lambda pkt:pkt.attribute_direction == 0x00
+        ),
+        # Reportable Change (variable)
+        ConditionalField(
+            _DiscreteString("reportable_change", ""),
+            lambda pkt:pkt.attribute_direction == 0x00
+        ),
+        # Timeout Period (0/2 octets)
+        ConditionalField(
+            XLEShortField("timeout_period", 0),
+            lambda pkt:pkt.attribute_direction == 0x01
+        ),
+    ]
+
+    def extract_padding(self, s):
+        return "", s
+
+
+class ZCLConfigureReportingResponseRecord(Packet):
+    name = "ZCL Configure Reporting Response Record"
+    fields_desc = [
+        # Status (1 octet)
+        ByteEnumField("status", 0, _zcl_enumerated_status_values),
+        # Direction (0/1 octet)
+        ConditionalField(
+            ByteField("attribute_direction", 0),
+            lambda pkt:pkt.status != 0x00
+        ),
+        # Attribute Identifier (0/2 octets)
+        ConditionalField(
+            XLEShortField("attribute_identifier", 0),
+            lambda pkt:pkt.status != 0x00
+        ),
+    ]
+
+    def extract_padding(self, s):
+        return "", s
+
+
+class ZCLAttributeReport(Packet):
+    name = "ZCL Attribute Report"
+    fields_desc = [
+        # Attribute Identifier (2 octets)
+        XLEShortField("attribute_identifier", 0),
+        # Attribute Data Type (1 octet)
+        ByteEnumField("attribute_data_type", 0, _zcl_attribute_data_types),
+        # Attribute Data (variable)
+        _DiscreteString("attribute_data", ""),
+    ]
+
+    def extract_padding(self, s):
+        return "", s
+
+
 class ZCLGeneralReadAttributes(Packet):
     name = "General Domain: Command Frame Payload: read_attributes"
     fields_desc = [
@@ -1035,6 +1209,85 @@ class ZCLGeneralReadAttributesResponse(Packet):
     name = "General Domain: Command Frame Payload: read_attributes_response"
     fields_desc = [
         PacketListField("read_attribute_status_record", [], ZCLReadAttributeStatusRecord),  # noqa: E501
+    ]
+
+
+class ZCLGeneralWriteAttributes(Packet):
+    name = "General Domain: Command Frame Payload: write_attributes"
+    fields_desc = [
+        PacketListField("write_records", [], ZCLWriteAttributeRecord),
+    ]
+
+
+class ZCLGeneralWriteAttributesResponse(Packet):
+    name = "General Domain: Command Frame Payload: write_attributes_response"
+    fields_desc = [
+        PacketListField("status_records", [], ZCLWriteAttributeStatusRecord),
+    ]
+
+
+class ZCLGeneralConfigureReporting(Packet):
+    name = "General Domain: Command Frame Payload: configure_reporting"
+    fields_desc = [
+        PacketListField("config_records", [], ZCLConfigureReportingRecord),
+    ]
+
+
+class ZCLGeneralConfigureReportingResponse(Packet):
+    name = "General Domain: Command Frame Payload: configure_reporting_response"  # noqa: E501
+    fields_desc = [
+        PacketListField("status_records", [], ZCLConfigureReportingResponseRecord),  # noqa: E501
+    ]
+
+
+class ZCLGeneralReportAttributes(Packet):
+    name = "General Domain: Command Frame Payload: report_attributes"
+    fields_desc = [
+        PacketListField("attribute_reports", [], ZCLAttributeReport),
+    ]
+
+
+class ZCLGeneralDefaultResponse(Packet):
+    name = "General Domain: Command Frame Payload: default_response"
+    fields_desc = [
+        # Response Command Identifier (1 octet)
+        ByteField("response_command_identifier", 0),
+        # Status (1 octet)
+        ByteEnumField("status", 0, _zcl_enumerated_status_values),
+    ]
+
+
+class ZCLIASZoneZoneEnrollResponse(Packet):
+    name = "IAS Zone Cluster: Zone Enroll Response Command (Server: Received)"
+    fields_desc = [
+        # Enroll Response Code (1 octet)
+        ByteEnumField("rsp_code", 0, _zcl_ias_zone_enroll_response_codes),
+        # Zone ID (1 octet)
+        ByteField("zone_id", 0),
+    ]
+
+
+class ZCLIASZoneZoneStatusChangeNotification(Packet):
+    name = "IAS Zone Cluster: Zone Status Change Notification Command (Server: Generated)"  # noqa: E501
+    fields_desc = [
+        # Zone Status (2 octets)
+        StrFixedLenField("zone_status", b'\x00\x00', length=2),
+        # Extended Status (1 octet)
+        StrFixedLenField("extended_status", b'\x00', length=1),
+        # Zone ID (1 octet)
+        ByteField("zone_id", 0),
+        # Delay (2 octets)
+        XLEShortField("delay", 0),
+    ]
+
+
+class ZCLIASZoneZoneEnrollRequest(Packet):
+    name = "IAS Zone Cluster: Zone Enroll Request Command (Server: Generated)"
+    fields_desc = [
+        # Zone Type (2 octets)
+        EnumField("zone_type", 0, _zcl_ias_zone_zone_types, fmt="<H"),
+        # Manufacturer Code (2 octets)
+        XLEShortField("manuf_code", 0),
     ]
 
 
@@ -1094,11 +1347,14 @@ class ZCLPricePublishPrice(Packet):
 
 class ZigbeeClusterLibrary(Packet):
     name = "Zigbee Cluster Library (ZCL) Frame"
+    deprecated_fields = {
+        "direction": ("command_direction", "2.5.0"),
+    }
     fields_desc = [
         # Frame control (8 bits)
         BitField("reserved", 0, 3),
         BitField("disable_default_response", 0, 1),  # 0 default response command will be returned  # noqa: E501
-        BitField("direction", 0, 1),  # 0 command sent from client to server; 1 command sent from server to client  # noqa: E501
+        BitField("command_direction", 0, 1),  # 0 command sent from client to server; 1 command sent from server to client  # noqa: E501
         BitField("manufacturer_specific", 0, 1),  # 0 manufacturer code shall not be included in the ZCL frame  # noqa: E501
         # Frame Type
         # 0b00 command acts across the entire profile
@@ -1116,17 +1372,38 @@ class ZigbeeClusterLibrary(Packet):
     ]
 
     def guess_payload_class(self, payload):
-        # Profile-wide commands
-        if self.zcl_frametype == 0x00 and self.command_identifier == 0x00:
-            # done in bind_layers
-            pass
-        # Cluster-specific commands
-        elif self.zcl_frametype == 0x01 and self.command_identifier == 0x00 and self.direction == 0 and self.underlayer.cluster == 0x0700:  # "price"  # noqa: E501
-            return ZCLPriceGetCurrentPrice
-        elif self.zcl_frametype == 0x01 and self.command_identifier == 0x01 and self.direction == 0 and self.underlayer.cluster == 0x0700:  # "price"  # noqa: E501
-            return ZCLPriceGetScheduledPrices
-        elif self.zcl_frametype == 0x01 and self.command_identifier == 0x00 and self.direction == 1 and self.underlayer.cluster == 0x0700:  # "price"  # noqa: E501
-            return ZCLPricePublishPrice
+        if self.zcl_frametype == 0x00:
+            # Profile-wide command
+            if (self.command_identifier in
+                    {0x00, 0x01, 0x02, 0x04, 0x06, 0x07, 0x0a, 0x0b}):
+                # done in bind_layers
+                pass
+        elif self.zcl_frametype == 0x01:
+            # Cluster-specific command
+            if self.underlayer.cluster == 0x0500:
+                # IAS Zone
+                if self.command_direction == 0:
+                    # Client-to-Server command
+                    if self.command_identifier == 0x00:
+                        return ZCLIASZoneZoneEnrollResponse
+                elif self.command_direction == 1:
+                    # Server-to-Client command
+                    if self.command_identifier == 0x00:
+                        return ZCLIASZoneZoneStatusChangeNotification
+                    elif self.command_identifier == 0x01:
+                        return ZCLIASZoneZoneEnrollRequest
+            elif self.underlayer.cluster == 0x0700:
+                # Price cluster
+                if self.command_direction == 0:
+                    # Client-to-Server command
+                    if self.command_identifier == 0x00:
+                        return ZCLPriceGetCurrentPrice
+                    elif self.command_identifier == 0x01:
+                        return ZCLPriceGetScheduledPrices
+                elif self.command_direction == 1:
+                    # Server-to-Client command
+                    if self.command_identifier == 0x00:
+                        return ZCLPricePublishPrice
         return Packet.guess_payload_class(self, payload)
 
 
@@ -1134,6 +1411,19 @@ bind_layers(ZigbeeClusterLibrary, ZCLGeneralReadAttributes,
             zcl_frametype=0x00, command_identifier=0x00)
 bind_layers(ZigbeeClusterLibrary, ZCLGeneralReadAttributesResponse,
             zcl_frametype=0x00, command_identifier=0x01)
+bind_layers(ZigbeeClusterLibrary, ZCLGeneralWriteAttributes,
+            zcl_frametype=0x00, command_identifier=0x02)
+bind_layers(ZigbeeClusterLibrary, ZCLGeneralWriteAttributesResponse,
+            zcl_frametype=0x00, command_identifier=0x04)
+bind_layers(ZigbeeClusterLibrary, ZCLGeneralConfigureReporting,
+            zcl_frametype=0x00, command_identifier=0x06)
+bind_layers(ZigbeeClusterLibrary, ZCLGeneralConfigureReportingResponse,
+            zcl_frametype=0x00, command_identifier=0x07)
+bind_layers(ZigbeeClusterLibrary, ZCLGeneralReportAttributes,
+            zcl_frametype=0x00, command_identifier=0x0a)
+bind_layers(ZigbeeClusterLibrary, ZCLGeneralDefaultResponse,
+            zcl_frametype=0x00, command_identifier=0x0b)
+
 
 # Zigbee Encapsulation Protocol
 

@@ -1,0 +1,5 @@
+# The scapy application only starts a Python interpreter with scapy imported
+python3-scapy: application-in-library-section python [usr/bin/scapy3]
+python3-scapy: application-in-library-section python [usr/bin/scapy]
+python3-scapy: library-package-name-for-application [usr/bin/scapy3]
+python3-scapy: library-package-name-for-application [usr/bin/scapy]

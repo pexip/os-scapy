@@ -1,0 +1,17 @@
+Description: fix typo in manpage
+Author: Carlos Henrique Lima Melara <charlesmelara@outlook.com>
+Forwarded: https://github.com/secdev/scapy/pull/3848
+Applied-Upstream: 2.5.1, https://github.com/secdev/scapy/commit/b06f437d63722041d3c03193fafa797a3074a025
+Last-Update: 2023-01-11
+
+--- a/doc/scapy.1
++++ b/doc/scapy.1
+@@ -72,7 +72,7 @@ If a string is given as parameter, it is used to filter the layers.
+ .TP
+ \fBexplore()\fR
+ explores available protocols.
+-Allows to look for a layer or protocol through an interactive GUI.
++Allows one to look for a layer or protocol through an interactive GUI.
+ If a Scapy module is given as parameter, explore this specific module.
+ .TP
+ \fBlsc()\fR

