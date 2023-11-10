@@ -1,6 +1,14 @@
 name: Scapy unit tests
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [master]
+  pull_request:
+    # The branches below must be a subset of the branches above
+    branches: [master]
+
+permissions:
+  contents: read
 
 jobs:
   health:
@@ -8,11 +16,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Scapy
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Python
-        uses: actions/setup-python@v1
+        uses: actions/setup-python@v4
         with:
-          python-version: 3.8
+          python-version: "3.10"
       - name: Install tox
         run: pip install tox
       - name: Run flake8 tests
@@ -26,11 +34,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Scapy
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Python
-        uses: actions/setup-python@v1
+        uses: actions/setup-python@v4
         with:
-          python-version: 3.8
+          python-version: "3.10"
       - name: Install tox
         run: pip install tox
       - name: Build docs
@@ -40,35 +48,144 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Scapy
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Setup Python
-        uses: actions/setup-python@v1
+        uses: actions/setup-python@v4
         with:
-          python-version: 3.8
+          python-version: "3.10"
       - name: Install tox
         run: pip install tox
       - name: Run mypy
         run: tox -e mypy
 
-  # Github Actions block ICMP. We can still use it for non root tests
+  # https://github.com/actions/runner-images/issues/6399
+  # Python 2.7 tests must be run on ubuntu <= 20.04
   utscapy:
-    name: Non-sudo unit tests
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} ${{ matrix.installmode }} ${{ matrix.python }} ${{ matrix.mode }} ${{ matrix.flags }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    continue-on-error: ${{ matrix.allow-failure == 'true' }}
     strategy:
+      fail-fast: false
       matrix:
-        python: [2.7, pypy2, pypy3, 3.5, 3.6, 3.7, 3.8]
+        os: [ubuntu-latest]
+        python: ["3.7", "3.8", "3.9", "3.10"]
+        mode: [non_root]
+        installmode: ['']
+        flags: [" -K scanner"]
+        allow-failure: ['false']
+        include:
+          # Linux root tests
+          - os: ubuntu-20.04
+            python: "2.7"
+            mode: root
+            flags: " -K scanner"
+          - os: ubuntu-latest
+            python: "3.10"
+            mode: root
+            flags: " -K scanner"
+          # PyPy tests: root only
+          - os: ubuntu-20.04
+            python: "pypy2.7"
+            mode: root
+            flags: " -K scanner"
+          - os: ubuntu-latest
+            python: "pypy3.9"
+            mode: root
+            flags: " -K scanner"
+          # Libpcap test
+          - os: ubuntu-latest
+            python: "3.10"
+            mode: root
+            installmode: 'libpcap'
+            flags: " -K scanner"
+          # MacOS tests
+          - os: macos-12
+            python: "2.7"
+            mode: both
+            flags: " -K scanner"
+          - os: macos-12
+            python: "3.10"
+            mode: both
+            flags: " -K scanner"
+          # Scanner tests
+          - os: ubuntu-20.04
+            python: "2.7"
+            mode: root
+            allow-failure: 'true'
+            flags: " -k scanner"
+          - os: ubuntu-latest
+            python: "3.10"
+            mode: root
+            allow-failure: 'true'
+            flags: " -k scanner"
+          - os: ubuntu-20.04
+            python: "pypy2.7"
+            mode: root
+            allow-failure: 'true'
+            flags: " -k scanner"
+          - os: ubuntu-latest
+            python: "pypy3.9"
+            mode: root
+            allow-failure: 'true'
+            flags: " -k scanner"
+          - os: macos-12
+            python: "3.10"
+            mode: both
+            allow-failure: 'true'
+            flags: " -k scanner"
     steps:
       - name: Checkout Scapy
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
+        # Codecov requires a fetch-depth > 1
+        with:
+          fetch-depth: 2
       - name: Setup Python
-        uses: actions/setup-python@v1
+        uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python }}
       - name: Install Tox and any other packages
-        run: ./.config/ci/install.sh
+        run: ./.config/ci/install.sh ${{ matrix.installmode }}
       - name: Run Tox
-        run: ./.config/ci/test.sh ${{ matrix.python }} non_root
+        run: UT_FLAGS="${{ matrix.flags }}" ./.config/ci/test.sh ${{ matrix.python }} ${{ matrix.mode }}
       - name: Codecov
-        uses: codecov/codecov-action@v1
+        uses: codecov/codecov-action@v2
         with:
             file: /home/runner/work/scapy/scapy/.coverage
+
+  cryptography:
+    name: pyca/cryptography test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.10"
+    - name: Install tox
+      run: pip install tox
+    # pyca/cryptography's CI installs cryptography
+    # then runs the tests. We therefore didn't include it in tox
+    - name: Install cryptography
+      run: pip install cryptography
+    - name: Run tests
+      run: tox -e cryptography
+
+  # CODE-QL
+  analyze:
+    name: CodeQL analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 2
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v2
+      with:
+         languages: 'python'
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2

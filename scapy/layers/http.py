@@ -1,10 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
-# Copyright (C) 2019 Gabriel Potter <gabriel@potter.fr>
+# See https://scapy.net/ for more information
 # Copyright (C) 2012 Luca Invernizzi <invernizzi.l@gmail.com>
 # Copyright (C) 2012 Steeve Barbeau <http://www.sbarbeau.fr>
-
-# This program is published under a GPLv2 license
+# Copyright (C) 2019 Gabriel Potter <gabriel[]potter[]fr>
 
 """
 HTTP 1.0 layer.
@@ -39,13 +38,15 @@ You can turn auto-decompression/auto-compression off with:
 # This file is a modified version of the former scapy_http plugin.
 # It was reimplemented for scapy 2.4.3+ using sessions, stream handling.
 # Original Authors : Steeve Barbeau, Luca Invernizzi
-# Originally published under a GPLv2 license
 
+import io
 import os
 import re
+import socket
 import struct
 import subprocess
 
+from scapy.base_classes import Net
 from scapy.compat import plain_str, bytes_encode, \
     gzip_compress, gzip_decompress
 from scapy.config import conf
@@ -53,17 +54,24 @@ from scapy.consts import WINDOWS
 from scapy.error import warning, log_loading
 from scapy.fields import StrField
 from scapy.packet import Packet, bind_layers, bind_bottom_up, Raw
+from scapy.supersocket import StreamSocket
 from scapy.utils import get_temp_file, ContextManagerSubprocess
 
 from scapy.layers.inet import TCP, TCP_client
 
-from scapy.modules import six
+from scapy.libs import six
 
 try:
     import brotli
     _is_brotli_available = True
 except ImportError:
     _is_brotli_available = False
+
+try:
+    import zstandard
+    _is_zstd_available = True
+except ImportError:
+    _is_zstd_available = False
 
 if "http" not in conf.contribs:
     conf.contribs["http"] = {}
@@ -123,7 +131,6 @@ REQUEST_HEADERS = [
 
 COMMON_UNSTANDARD_REQUEST_HEADERS = [
     "Upgrade-Insecure-Requests",
-    "Upgrade-Insecure-Requests",
     "X-Requested-With",
     "DNT",
     "X-Forwarded-For",
@@ -163,7 +170,6 @@ RESPONSE_HEADERS = [
     "Last-Modified",
     "Link",
     "Location",
-    "Permanent",
     "P3P",
     "Proxy-Authenticate",
     "Public-Key-Pins",
@@ -255,7 +261,7 @@ def _dissect_headers(obj, s):
             continue
         obj.setfieldval(f.name, value)
     if headers:
-        headers = {key: value for key, value in six.itervalues(headers)}
+        headers = dict(six.itervalues(headers))
         obj.setfieldval('Unknown_Headers', headers)
     return first_line, body
 
@@ -274,8 +280,7 @@ class _HTTPContent(Packet):
         return encodings
 
     def hashret(self):
-        # The only field both Answers and Responses have in common
-        return self.Http_Version
+        return b"HTTP1"
 
     def post_dissect(self, s):
         if not conf.contribs["http"]["auto_compression"]:
@@ -318,6 +323,19 @@ class _HTTPContent(Packet):
                         "Can't import brotli. brotli decompression "
                         "will be ignored !"
                     )
+            elif "zstd" in encodings:
+                if _is_zstd_available:
+                    # Using its streaming API since its simple API could handle
+                    # only cases where there is content size data embedded in
+                    # the frame
+                    bio = io.BytesIO(s)
+                    reader = zstandard.ZstdDecompressor().stream_reader(bio)
+                    s = reader.read()
+                else:
+                    log_loading.info(
+                        "Can't import zstandard. zstd decompression "
+                        "will be ignored !"
+                    )
         except Exception:
             # Cannot decompress - probably incomplete data
             pass
@@ -344,9 +362,17 @@ class _HTTPContent(Packet):
                     "Can't import brotli. brotli compression will "
                     "be ignored !"
                 )
+        elif "zstd" in encodings:
+            if _is_zstd_available:
+                pay = zstandard.ZstdCompressor().compress(pay)
+            else:
+                log_loading.info(
+                    "Can't import zstandard. zstd compression will "
+                    "be ignored !"
+                )
         return pkt + pay
 
-    def self_build(self, field_pos_list=None):
+    def self_build(self, **kwargs):
         ''' Takes an HTTPRequest or HTTPResponse object, and creates its
         string representation.'''
         if not isinstance(self.underlayer, HTTP):
@@ -552,7 +578,7 @@ class HTTP(Packet):
 
     # tcp_reassemble is used by TCPSession in session.py
     @classmethod
-    def tcp_reassemble(cls, data, metadata):
+    def tcp_reassemble(cls, data, metadata, _):
         detect_end = metadata.get("detect_end", None)
         is_unknown = metadata.get("detect_unknown", True)
         if not detect_end or is_unknown:
@@ -637,7 +663,7 @@ class HTTP(Packet):
 
 def http_request(host, path="/", port=80, timeout=3,
                  display=False, verbose=0,
-                 iptables=False, iface=None,
+                 raw=False, iptables=False, iface=None,
                  **headers):
     """Util to perform an HTTP request, using the TCP_client.
 
@@ -645,14 +671,19 @@ def http_request(host, path="/", port=80, timeout=3,
     :param path: the path of the request (default /)
     :param port: the port (default 80)
     :param timeout: timeout before None is returned
-    :param display: display the resullt in the default browser (default False)
-    :param iface: interface to use. default: conf.iface
-    :param iptables: temporarily prevents the kernel from
-      answering with a TCP RESET message.
+    :param display: display the result in the default browser (default False)
+    :param raw: opens a raw socket instead of going through the OS's TCP
+                socket. Scapy will then use its own TCP client.
+                Careful, the OS might cancel the TCP connection with RST.
+    :param iptables: when raw is enabled, this calls iptables to temporarily
+                     prevent the OS from sending TCP RST to the host IP.
+                     On Linux, you'll almost certainly need this.
+    :param iface: interface to use. Changing this turns on "raw"
     :param headers: any additional headers passed to the request
 
     :returns: the HTTPResponse packet
     """
+    from scapy.sessions import TCPSession
     http_headers = {
         "Accept_Encoding": b'gzip, deflate',
         "Cache_Control": b'no-cache',
@@ -663,19 +694,37 @@ def http_request(host, path="/", port=80, timeout=3,
     }
     http_headers.update(headers)
     req = HTTP() / HTTPRequest(**http_headers)
-    tcp_client = TCP_client.tcplink(HTTP, host, port, debug=verbose,
-                                    iface=iface)
     ans = None
-    if iptables:
-        ip = tcp_client.atmt.dst
+
+    # Open a socket
+    if iface is not None:
+        raw = True
+    if raw:
+        # Use TCP_client on a raw socket
         iptables_rule = "iptables -%c INPUT -s %s -p tcp --sport 80 -j DROP"
-        assert(os.system(iptables_rule % ('A', ip)) == 0)
-    try:
-        ans = tcp_client.sr1(req, timeout=timeout, verbose=verbose)
-    finally:
-        tcp_client.close()
         if iptables:
-            assert(os.system(iptables_rule % ('D', ip)) == 0)
+            host = str(Net(host))
+            assert os.system(iptables_rule % ('A', host)) == 0
+        sock = TCP_client.tcplink(HTTP, host, port, debug=verbose,
+                                  iface=iface)
+    else:
+        # Use a native TCP socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((host, port))
+        sock = StreamSocket(sock, HTTP)
+    # Send the request and wait for the answer
+    try:
+        ans = sock.sr1(
+            req,
+            session=TCPSession(app=True),
+            timeout=timeout,
+            verbose=verbose
+        )
+    finally:
+        sock.close()
+        if raw and iptables:
+            host = str(Net(host))
+            assert os.system(iptables_rule % ('D', host)) == 0
     if ans:
         if display:
             if Raw not in ans:

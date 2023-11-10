@@ -1,20 +1,17 @@
 #!/usr/bin/env python
 
-## This file is part of Scapy
-## This program is published under a GPLv2 license
+# SPDX-License-Identifier: GPL-2.0-only
+# This file is part of Scapy
+# See https://scapy.net/ for more information
 
 """
 Basic TLS client. A ciphersuite may be commanded via a first argument.
 Default protocol version is TLS 1.3.
 """
 
-import logging
 import os
 import socket
 import sys
-
-logger = logging.getLogger("scapy")
-logger.addHandler(logging.StreamHandler())
 
 basedir = os.path.abspath(os.path.join(os.path.dirname(__file__),"../../"))
 sys.path=[basedir]+sys.path
@@ -84,10 +81,6 @@ if not server_name and args.server:
         inet_aton(args.server)
     except socket.error:
         server_name = args.server
-
-if args.debug == 5:
-    conf.logLevel = 10
-    conf.warning_threshold = 0
 
 t = TLSClientAutomaton(server=args.server, dport=args.port,
                        server_name=server_name,

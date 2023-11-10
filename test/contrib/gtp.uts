@@ -28,14 +28,14 @@ assert a[GTPPDUSessionContainer].NextExtHdr == 0
 
 = GTP_U_Header with PDU Session Container with QFI/PPI
 
-a = GTPHeader(raw(GTP_U_Header()/GTPPDUSessionContainer(type=1, QFI=3, P=1, PPI=6)))
+a = GTPHeader(raw(GTP_U_Header()/GTPPDUSessionContainer(type=0, QFI=3, P=1, PPI=6)))
 assert isinstance(a, GTP_U_Header)
 assert a[GTP_U_Header].E == 1 and a[GTP_U_Header].next_ex == 0x85
 assert a[GTPPDUSessionContainer].ExtHdrLen == 2
 assert a[GTPPDUSessionContainer].P == 1 and a[GTPPDUSessionContainer].R == 0
 assert a[GTPPDUSessionContainer].QFI == 3 and a[GTPPDUSessionContainer].PPI == 6
 assert a[GTPPDUSessionContainer].NextExtHdr == 0
-assert a[GTPPDUSessionContainer].type == 1
+assert a[GTPPDUSessionContainer].type == 0
 
 = GTP_U_Header sub layers
 
@@ -53,9 +53,14 @@ a = IP(raw(IP()/UDP()/GTP_U_Header()/PPP()))
 assert isinstance(a[GTP_U_Header].payload, PPP)
 
 = GTPPDUSessionContainer(), dissect
-h = "fa163e7da573fa163e43f8e708004500008400000000fd119f520a0a05010a0a0502086808680070000034ff006000000010fa163e85020044000000000045000054cd4e000040015a440a0a08020a0a370100001aca0046000142cff45e00000000e2ed0c0000000000101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f3031323334353637"
+h = 'fa163ed6de7bfa163ed82b9408004500008400000000fe114b560a0a2e010a0a2efe086808680070000034ff006000000001fa163e850200ff800000000045000054074d00004001fb490a0a31fe0a0a32010000325600930001c444ca5f00000000759e0a0000000000101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f3031323334353637'
 gtp = Ether(hex_bytes(h))
-gtp[GTP_U_Header].ExtHdrLen == 2 and gtp[GTP_U_Header].extraPadding == b'\x00\x00\x00\x00' and gtp[GTP_U_Header][IP].src == '10.10.8.2' and gtp[GTP_U_Header][IP][ICMP].type == 0
+gtp[GTP_U_Header].ExtHdrLen == 2 and gtp[GTP_U_Header].padding == b'\x00\x00\x00' and gtp[GTP_U_Header][IP].src == '10.10.49.254' and gtp[GTP_U_Header][IP][ICMP].type == 0 and gtp[GTP_U_Header].type == 0 and gtp[GTP_U_Header].qmp == 0 and gtp[GTP_U_Header].P == 1 and gtp[GTP_U_Header].R == 1 and gtp[GTP_U_Header].QFI == 63 and gtp[GTP_U_Header].PPI == 4
+
+= GTPPDUSessionContainer with padding
+data = b'\xff\xff\xff\xff\xff\xff\x00\x00\x00\x00\x00\x00\x08\x00E\x00\x00^\x00\x01\x00\x00@\x11|\x8c\x7f\x00\x00\x01\x7f\x00\x00\x01\x08h\x08h\x00J\xed^4\xff\x00:\x00\x00\x00\x00\x00\x00\x00\x85\x04\x08\xbf\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00E\x00\x00&\x00\x01\x00\x00@\x11|\xc4\x7f\x00\x00\x01\x7f\x00\x00\x01\x005\x005\x00\x12\x01^ffffffffff000'
+gtp = Ether(data)
+assert IP in gtp
 
 = GTPEchoResponse matches GTPEchoRequest by seq
 req = GTPHeader(seq=12345)/GTPEchoRequest()
@@ -72,7 +77,8 @@ random.seed(0x2807)
 rg = raw(gtp)
 rg
 assert rg in [
-    b"E\x00\x00K\x00\x01\x00\x00@\x11|\x9f\x7f\x00\x00\x01\x7f\x00\x00\x01\x08K\x08K\x007\x99\xce0\x10\x00'\x00\x00\n\xf7\x10\x12\x05\xf7(\x14\x0b\x85\x00\x04\xb7\xd0\xbf \x85\x00\x04\xe2\xb8\x88\x19\x87\x00\x0ffOTLcIukpXKxV0Z",
+    b"E\x00\x00K\x00\x01\x00\x00@\x11|\x9f\x7f\x00\x00\x01\x7f\x00\x00\x01\x08K\x08K\x007\x8e\x860\x10\x00'\x00\x00\n\xf7\x10\x12\x05\xf7(\x14\x0b\x85\x00\x04_\xe2,i\x85\x00\x04\xadm\x97\x83\x87\x00\x0f1DfOTLcIukpXKxV",
+    b'E\x00\x00K\x00\x01\x00\x00@\x11|\x9f\x7f\x00\x00\x01\x7f\x00\x00\x01\x08K\x08K\x007ty0\x10\x00\'\x00\x00\n\xf7\x10\xf0\x84"\x1c\x14\x00\x85\x00\x04\x02D\x81\xe8\x85\x00\x04\xbd\xeb\x92z\x87\x00\x0fv2LUNmjgwdrVOeg',
     b"E\x00\x00K\x00\x01\x00\x00@\x11|\x9f\x7f\x00\x00\x01\x7f\x00\x00\x01\x08K\x08K\x007n\xb20\x10\x00'\x00\x00\n\xf7\x10\x91\x9f\xbc\xaa\x14\x07\x85\x00\x04<\x7f\x87\x14\x85\x00\x04\xbcU\x14\xcb\x87\x00\x0f9Co27Fbj65eKHyQ",
 ]
 
@@ -304,8 +310,7 @@ ie = gtp.IE_list[5]
 ie.ietype == 135 and ie.allocation_retention_prioiry == 2 and ie.delay_class == 2 and ie.traffic_class == 3
 
 = IE_QoS(), basic instantiation
-ie = IE_QoS(
-    allocation_retention_prioiry=2, delay_class=2, traffic_class=3)
+ie = IE_QoS(allocation_retention_prioiry=2, delay_class=2, traffic_class=3, length=50)
 ie.ietype == 135 and ie.allocation_retention_prioiry == 2 and ie.delay_class == 2 and ie.traffic_class == 3
 
 = IE_CommonFlags(), dissect
@@ -385,7 +390,9 @@ ie.ietype == 191 and ie.PCI == 1
 
 = IE_CharginGatewayAddress(), basic instantiation
 ie = IE_CharginGatewayAddress()
-ie.ietype == 251 and ie.ipv4_address == '127.0.0.1' and ie.ipv6_address == '::1'
+assert ie.ietype == 251 and ie.ipv4_address == '127.0.0.1'
+ie = IE_CharginGatewayAddress(length=16)
+assert ie.ietype == 251 and ie.ipv6_address == '::1'
 
 = IE_PrivateExtension(), basic instantiation
 ie = IE_PrivateExtension(extention_value='hello')

@@ -1,29 +1,8 @@
-# MIT License
-
-# Copyright (c) 2018 Jose Amores
-
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Sebastian Baar <sebastian.baar@gmx.de>
-# This program is published under a GPLv2 license
+# Copyright (c) 2018 Jose Amores
 
 # scapy.contrib.description = Scalable service-Oriented MiddlewarE/IP (SOME/IP)
 # scapy.contrib.status = loads
@@ -36,7 +15,6 @@ from scapy.layers.inet import TCP, UDP
 from scapy.layers.inet6 import IP6Field
 from scapy.compat import raw, orb
 from scapy.config import conf
-from scapy.modules.six.moves import range
 from scapy.packet import Packet, Raw, bind_top_down, bind_bottom_up
 from scapy.fields import XShortField, BitEnumField, ConditionalField, \
     BitField, XBitField, IntField, XByteField, ByteEnumField, \
@@ -64,8 +42,8 @@ class SOMEIP(Packet):
     TYPE_TP_REQUEST = 0x20
     TYPE_TP_REQUEST_NO_RET = 0x21
     TYPE_TP_NOTIFICATION = 0x22
-    TYPE_TP_RESPONSE = 0x23
-    TYPE_TP_ERROR = 0x24
+    TYPE_TP_RESPONSE = 0xa0
+    TYPE_TP_ERROR = 0xa1
     RET_E_OK = 0x00
     RET_E_NOT_OK = 0x01
     RET_E_UNKNOWN_SERVICE = 0x02
@@ -144,7 +122,7 @@ class SOMEIP(Packet):
         return pkt + pay
 
     def answers(self, other):
-        if other.__class__ == self.__class__:
+        if isinstance(other, type(self)):
             if self.msg_type in [SOMEIP.TYPE_REQUEST_NO_RET,
                                  SOMEIP.TYPE_REQUEST_NORET_ACK,
                                  SOMEIP.TYPE_NOTIFICATION,
@@ -463,11 +441,11 @@ class SD(_SDPacketBase):
         X3BytesField("res", 0),
         FieldLenField("len_entry_array", None,
                       length_of="entry_array", fmt="!I"),
-        PacketListField("entry_array", None, cls=_sdentry_class,
+        PacketListField("entry_array", None, _sdentry_class,
                         length_from=lambda pkt: pkt.len_entry_array),
         FieldLenField("len_option_array", None,
                       length_of="option_array", fmt="!I"),
-        PacketListField("option_array", None, cls=_sdoption_class,
+        PacketListField("option_array", None, _sdoption_class,
                         length_from=lambda pkt: pkt.len_option_array)
     ]
 

@@ -1,7 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Philippe Biondi <phil@secdev.org>
-# This program is published under a GPLv2 license
 
 """
 Common customizations for all Unix-like operating systems other than Linux
@@ -9,16 +9,64 @@ Common customizations for all Unix-like operating systems other than Linux
 
 import os
 import socket
+import struct
+from fcntl import ioctl
 
 import scapy.config
 import scapy.utils
-from scapy.arch import get_if_addr
 from scapy.config import conf
 from scapy.consts import FREEBSD, NETBSD, OPENBSD, SOLARIS
-from scapy.error import warning, log_interactive
+from scapy.error import log_runtime, warning
+from scapy.interfaces import network_name, NetworkInterface
 from scapy.pton_ntop import inet_pton
 from scapy.utils6 import in6_getscope, construct_source_candidate_set
 from scapy.utils6 import in6_isvalid, in6_ismlladdr, in6_ismnladdr
+
+# Typing imports
+from scapy.compat import (
+    List,
+    Optional,
+    Tuple,
+    Union,
+    cast,
+)
+
+
+def get_if(iff, cmd):
+    # type: (Union[NetworkInterface, str], int) -> bytes
+    """Ease SIOCGIF* ioctl calls"""
+
+    iff = network_name(iff)
+    sck = socket.socket()
+    try:
+        return ioctl(sck, cmd, struct.pack("16s16x", iff.encode("utf8")))
+    finally:
+        sck.close()
+
+
+def get_if_raw_hwaddr(iff,  # type: Union[NetworkInterface, str]
+                      siocgifhwaddr=None,  # type: Optional[int]
+                      ):
+    # type: (...) -> Tuple[int, bytes]
+    """Get the raw MAC address of a local interface.
+
+    This function uses SIOCGIFHWADDR calls, therefore only works
+    on some distros.
+
+    :param iff: the network interface name as a string
+    :returns: the corresponding raw MAC address
+    """
+
+    if siocgifhwaddr is None:
+        from scapy.arch import SIOCGIFHWADDR
+        siocgifhwaddr = SIOCGIFHWADDR
+    return cast(
+        "Tuple[int, bytes]",
+        struct.unpack(
+            "16xH6s8x",
+            get_if(iff, siocgifhwaddr)
+        )
+    )
 
 
 ##################
@@ -26,6 +74,7 @@ from scapy.utils6 import in6_isvalid, in6_ismlladdr, in6_ismnladdr
 ##################
 
 def _guess_iface_name(netif):
+    # type: (str) -> Optional[str]
     """
     We attempt to guess the name of interfaces that are truncated from the
     output of ifconfig -l.
@@ -42,6 +91,7 @@ def _guess_iface_name(netif):
 
 
 def read_routes():
+    # type: () -> List[Tuple[int, int, str, str, str, int]]
     """Return a list of IPv4 routes than can be used by Scapy.
 
     This function parses netstat.
@@ -57,8 +107,8 @@ def read_routes():
     prio_present = False
     refs_present = False
     use_present = False
-    routes = []
-    pending_if = []
+    routes = []  # type: List[Tuple[int, int, str, str, str, int]]
+    pending_if = []  # type: List[Tuple[int, int, str]]
     for line in f.readlines():
         if not line:
             break
@@ -77,51 +127,54 @@ def read_routes():
             break
         rt = line.split()
         if SOLARIS:
-            dest, netmask, gw, netif = rt[:4]
+            dest_, netmask_, gw, netif = rt[:4]
             flg = rt[4 + mtu_present + refs_present]
         else:
-            dest, gw, flg = rt[:3]
+            dest_, gw, flg = rt[:3]
             locked = OPENBSD and rt[6] == "l"
             offset = mtu_present + prio_present + refs_present + locked
             offset += use_present
             netif = rt[3 + offset]
         if flg.find("lc") >= 0:
             continue
-        elif dest == "default":
+        elif dest_ == "default":
             dest = 0
             netmask = 0
         elif SOLARIS:
-            dest = scapy.utils.atol(dest)
-            netmask = scapy.utils.atol(netmask)
+            dest = scapy.utils.atol(dest_)
+            netmask = scapy.utils.atol(netmask_)
         else:
-            if "/" in dest:
-                dest, netmask = dest.split("/")
-                netmask = scapy.utils.itom(int(netmask))
+            if "/" in dest_:
+                dest_, netmask_ = dest_.split("/")
+                netmask = scapy.utils.itom(int(netmask_))
             else:
-                netmask = scapy.utils.itom((dest.count(".") + 1) * 8)
-            dest += ".0" * (3 - dest.count("."))
-            dest = scapy.utils.atol(dest)
+                netmask = scapy.utils.itom((dest_.count(".") + 1) * 8)
+            dest_ += ".0" * (3 - dest_.count("."))
+            dest = scapy.utils.atol(dest_)
         # XXX: TODO: add metrics for unix.py (use -e option on netstat)
         metric = 1
         if "g" not in flg:
             gw = '0.0.0.0'
         if netif is not None:
+            from scapy.arch import get_if_addr
             try:
                 ifaddr = get_if_addr(netif)
-                routes.append((dest, netmask, gw, netif, ifaddr, metric))
-            except OSError as exc:
-                if exc.message == 'Device not configured':
+                if ifaddr == "0.0.0.0":
                     # This means the interface name is probably truncated by
                     # netstat -nr. We attempt to guess it's name and if not we
                     # ignore it.
                     guessed_netif = _guess_iface_name(netif)
                     if guessed_netif is not None:
                         ifaddr = get_if_addr(guessed_netif)
-                        routes.append((dest, netmask, gw, guessed_netif, ifaddr, metric))  # noqa: E501
+                        netif = guessed_netif
                     else:
-                        warning("Could not guess partial interface name: %s", netif)  # noqa: E501
-                else:
-                    raise
+                        log_runtime.info(
+                            "Could not guess partial interface name: %s",
+                            netif
+                        )
+                routes.append((dest, netmask, gw, netif, ifaddr, metric))
+            except OSError:
+                raise
         else:
             pending_if.append((dest, netmask, gw))
     f.close()
@@ -131,8 +184,8 @@ def read_routes():
     # know their output interface
     for dest, netmask, gw in pending_if:
         gw_l = scapy.utils.atol(gw)
-        max_rtmask, gw_if, gw_if_addr, = 0, None, None
-        for rtdst, rtmask, _, rtif, rtaddr in routes[:]:
+        max_rtmask, gw_if, gw_if_addr = 0, None, None
+        for rtdst, rtmask, _, rtif, rtaddr, _ in routes[:]:
             if gw_l & rtmask == rtdst:
                 if rtmask >= max_rtmask:
                     max_rtmask = rtmask
@@ -140,7 +193,7 @@ def read_routes():
                     gw_if_addr = rtaddr
         # XXX: TODO add metrics
         metric = 1
-        if gw_if:
+        if gw_if and gw_if_addr:
             routes.append((dest, netmask, gw, gw_if, gw_if_addr, metric))
         else:
             warning("Did not find output interface to reach gateway %s", gw)
@@ -153,6 +206,7 @@ def read_routes():
 
 
 def _in6_getifaddr(ifname):
+    # type: (str) -> List[Tuple[str, int, str]]
     """
     Returns a list of IPv6 addresses configured on the interface ifname.
     """
@@ -161,7 +215,7 @@ def _in6_getifaddr(ifname):
     try:
         f = os.popen("%s %s" % (conf.prog.ifconfig, ifname))
     except OSError:
-        log_interactive.warning("Failed to execute ifconfig.")
+        log_runtime.warning("Failed to execute ifconfig.")
         return []
 
     # Iterate over lines and extract IPv6 addresses
@@ -189,6 +243,7 @@ def _in6_getifaddr(ifname):
 
 
 def in6_getifaddr():
+    # type: () -> List[Tuple[str, int, str]]
     """
     Returns a list of 3-tuples of the form (addr, scope, iface) where
     'addr' is the address of scope 'scope' associated to the interface
@@ -207,7 +262,7 @@ def in6_getifaddr():
         try:
             f = os.popen(cmd % conf.prog.ifconfig)
         except OSError:
-            log_interactive.warning("Failed to execute ifconfig.")
+            log_runtime.warning("Failed to execute ifconfig.")
             return []
 
         # Get the list of network interfaces
@@ -221,7 +276,7 @@ def in6_getifaddr():
         try:
             f = os.popen("%s -l" % conf.prog.ifconfig)
         except OSError:
-            log_interactive.warning("Failed to execute ifconfig.")
+            log_runtime.warning("Failed to execute ifconfig.")
             return []
 
         # Get the list of network interfaces
@@ -235,6 +290,7 @@ def in6_getifaddr():
 
 
 def read_routes6():
+    # type: () -> List[Tuple[str, int, str, str, List[str], int]]
     """Return a list of IPv6 routes than can be used by Scapy.
 
     This function parses netstat.
@@ -299,7 +355,7 @@ def read_routes6():
             next_hop = "::"
 
         # Default prefix length
-        destination_plen = 128
+        destination_plen = 128  # type: Union[int, str]
 
         # Extract network interface from the zone id
         if '%' in destination:

@@ -1,13 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Philippe Biondi <phil@secdev.org>
-# This program is published under a GPLv2 license
 
 """
 Unit testing infrastructure for Scapy
 """
 
 from __future__ import print_function
+
 import bz2
 import copy
 import code
@@ -17,18 +18,47 @@ import hashlib
 import importlib
 import json
 import logging
+import os
 import os.path
 import sys
+import threading
 import time
 import traceback
 import warnings
 import zlib
 
-from scapy.consts import WINDOWS
-import scapy.modules.six as six
-from scapy.modules.six.moves import range
+from scapy.consts import WINDOWS, DARWIN
+import scapy.libs.six as six
 from scapy.config import conf
 from scapy.compat import base64_bytes, bytes_hex, plain_str
+from scapy.themes import DefaultTheme, BlackAndWhite
+from scapy.utils import tex_escape
+
+
+# Check UTF-8 support #
+
+def _utf8_support():
+    """
+    Check UTF-8 support for the output
+    """
+    try:
+        if six.PY2:
+            return False
+        if WINDOWS:
+            return (sys.stdout.encoding == "utf-8")
+        return True
+    except AttributeError:
+        return False
+
+
+if _utf8_support():
+    arrow = "\u2514"
+    dash = "\u2501"
+    checkmark = "\u2713"
+else:
+    arrow = "->"
+    dash = "--"
+    checkmark = "OK"
 
 
 #   Util class   #
@@ -40,20 +70,39 @@ class Bunch:
 def retry_test(func):
     """Retries the passed function 3 times before failing"""
     success = False
-    ex = Exception("Unknown")
-    for _ in six.moves.range(3):
+    for _ in range(3):
         try:
             result = func()
-        except Exception as e:
+        except Exception:
+            t, v, tb = sys.exc_info()
             time.sleep(1)
-            ex = e
         else:
             success = True
             break
     if not success:
-        raise ex
+        six.reraise(t, v, tb)
     assert success
     return result
+
+
+def scapy_path(fname):
+    """Resolves a path relative to scapy's root folder"""
+    if fname.startswith('/'):
+        fname = fname[1:]
+    return os.path.abspath(os.path.join(
+        os.path.dirname(__file__), '../../', fname
+    ))
+
+
+class no_debug_dissector:
+    """Context object used to disable conf.debug_dissector"""
+    def __enter__(self):
+        self.old_dbg = conf.debug_dissector
+        conf.debug_dissector = False
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        conf.debug_dissector = self.old_dbg
+
 
 #    Import tool    #
 
@@ -240,6 +289,7 @@ class UnitTest(TestClass):
         self.test = ""
         self.comments = ""
         self.result = "passed"
+        self.fresult = ""
         # make instance True at init to have a different truth value than None
         self.duration = 0
         self.output = ""
@@ -248,12 +298,16 @@ class UnitTest(TestClass):
         self.crc = None
         self.expand = 1
 
-    def decode(self):
+    def prepare(self, theme):
         if six.PY2:
             self.test = self.test.decode("utf8", "ignore")
             self.output = self.output.decode("utf8", "ignore")
             self.comments = self.comments.decode("utf8", "ignore")
             self.result = self.result.decode("utf8", "ignore")
+        if self.result == "passed":
+            self.fresult = theme.success(self.result)
+        else:
+            self.fresult = theme.fail(self.result)
 
     def __nonzero__(self):
         return self.result == "passed"
@@ -288,7 +342,7 @@ def parse_config_file(config_path, verb=3):
     with open(config_path) as config_file:
         data = json.load(config_file)
         if verb > 2:
-            print("### Loaded config file", config_path, file=sys.stderr)
+            print(" %s Loaded config file" % arrow, config_path)
 
     def get_if_exist(key, default):
         return data[key] if key in data else default
@@ -348,8 +402,7 @@ def parse_campaign_file(campaign_file):
         else:
             if test is None:
                 if line.strip():
-                    print("Unknown content [%s]" % line.strip(),
-                          file=sys.stderr)
+                    raise ValueError("Unknown content [%s]" % line.strip())
             else:
                 test.test += line
     return test_campaign
@@ -476,10 +529,23 @@ def remove_empty_testsets(test_campaign):
 
 # RUN TEST #
 
-def run_test(test, get_interactive_session, verb=3, ignore_globals=None, my_globals=None):
+def _run_test_timeout(test, get_interactive_session, verb=3, my_globals=None):
+    """Run a test with timeout"""
+    from scapy.autorun import StopAutorunTimeout
+    try:
+        return get_interactive_session(test,
+                                       timeout=5 * 60,  # 5 min
+                                       verb=verb,
+                                       my_globals=my_globals)
+    except StopAutorunTimeout:
+        return "-- Test timed out ! --", False
+
+
+def run_test(test, get_interactive_session, theme, verb=3,
+             my_globals=None):
     """An internal UTScapy function to run a single test"""
     start_time = time.time()
-    test.output, res = get_interactive_session(test.test.strip(), ignore_globals=ignore_globals, verb=verb, my_globals=my_globals)
+    test.output, res = _run_test_timeout(test.test.strip(), get_interactive_session, verb=verb, my_globals=my_globals)
     test.result = "failed"
     try:
         if res is None or res:
@@ -499,11 +565,11 @@ def run_test(test, get_interactive_session, verb=3, ignore_globals=None, my_glob
                 cls, val = debug.crashed_on
                 test.output += "\n\nPACKET DISSECTION FAILED ON:\n %s(hex_bytes('%s'))" % (cls.__name__, plain_str(bytes_hex(val)))
                 debug.crashed_on = None
-        test.decode()
+        test.prepare(theme)
         if verb > 2:
-            print("%(result)6s %(crc)s %(duration)06.2fs %(name)s" % test, file=sys.stderr)
+            print("%(fresult)6s %(crc)s %(duration)06.2fs %(name)s" % test)
         elif verb > 1:
-            print("%(result)6s %(crc)s %(name)s" % test, file=sys.stderr)
+            print("%(fresult)6s %(crc)s %(name)s" % test)
 
     return bool(test)
 
@@ -512,22 +578,27 @@ def run_test(test, get_interactive_session, verb=3, ignore_globals=None, my_glob
 
 def import_UTscapy_tools(ses):
     """Adds UTScapy tools directly to a session"""
-    ses["retry_test"] = retry_test
     ses["Bunch"] = Bunch
+    ses["retry_test"] = retry_test
+    ses["scapy_path"] = scapy_path
+    ses["no_debug_dissector"] = no_debug_dissector
     if WINDOWS:
-        from scapy.arch.windows import _route_add_loopback, IFACES
+        from scapy.arch.windows import _route_add_loopback
         _route_add_loopback()
-        ses["IFACES"] = IFACES
+        ses["conf"].ifaces = conf.ifaces
         ses["conf"].route.routes = conf.route.routes
         ses["conf"].route6.routes = conf.route6.routes
 
 
-def run_campaign(test_campaign, get_interactive_session, drop_to_interpreter=False, verb=3, ignore_globals=None, scapy_ses=None):  # noqa: E501
+def run_campaign(test_campaign, get_interactive_session, theme,
+                 drop_to_interpreter=False, verb=3,
+                 scapy_ses=None):
     passed = failed = 0
     if test_campaign.preexec:
         test_campaign.preexec_output = get_interactive_session(
-            test_campaign.preexec.strip(), ignore_globals=ignore_globals,
-            my_globals=scapy_ses)[0]
+            test_campaign.preexec.strip(),
+            my_globals=scapy_ses
+        )[0]
 
     # Drop
     def drop(scapy_ses):
@@ -540,7 +611,8 @@ def run_campaign(test_campaign, get_interactive_session, drop_to_interpreter=Fal
     try:
         for i, testset in enumerate(test_campaign):
             for j, t in enumerate(testset):
-                if run_test(t, get_interactive_session, verb, my_globals=scapy_ses):
+                if run_test(t, get_interactive_session, theme,
+                            verb=verb, my_globals=scapy_ses):
                     passed += 1
                 else:
                     failed += 1
@@ -553,29 +625,42 @@ def run_campaign(test_campaign, get_interactive_session, drop_to_interpreter=Fal
         test_campaign.trunc(i + 1)
         test_campaign.interrupted = True
         if verb:
-            print("Campaign interrupted!", file=sys.stderr)
+            print("Campaign interrupted!")
             if drop_to_interpreter:
                 drop(scapy_ses)
 
     test_campaign.passed = passed
     test_campaign.failed = failed
+    style = [theme.success, theme.fail][bool(failed)]
     if verb > 2:
-        print("Campaign CRC=%(crc)s in %(duration)06.2fs SHA=%(sha)s" % test_campaign, file=sys.stderr)  # noqa: E501
-        print("PASSED=%i FAILED=%i" % (passed, failed), file=sys.stderr)
+        print("Campaign CRC=%(crc)s in %(duration)06.2fs SHA=%(sha)s" % test_campaign)
+        print(style("PASSED=%i FAILED=%i" % (passed, failed)))
     elif verb:
-        print("Campaign CRC=%(crc)s  SHA=%(sha)s" % test_campaign, file=sys.stderr)  # noqa: E501
-        print("PASSED=%i FAILED=%i" % (passed, failed), file=sys.stderr)
+        print("Campaign CRC=%(crc)s  SHA=%(sha)s" % test_campaign)
+        print(style("PASSED=%i FAILED=%i" % (passed, failed)))
     return failed
 
 
 #    INFO LINES    #
 
-def info_line(test_campaign):
+def info_line(test_campaign, theme):
     filename = test_campaign.filename
+    duration = test_campaign.duration
+    if duration > 10:
+        duration = theme.format(duration, "bg_red+white")
+    elif duration > 5:
+        duration = theme.format(duration, "red")
     if filename is None:
-        return "Run %s by UTscapy" % time.ctime()
+        return "Run at %s by UTscapy in %s" % (
+            time.strftime("%H:%M:%S"),
+            duration
+        )
     else:
-        return "Run %s from [%s] by UTscapy" % (time.ctime(), filename)
+        return "Run at %s from [%s] by UTscapy in %s" % (
+            time.strftime("%H:%M:%S"),
+            filename,
+            duration
+        )
 
 
 def html_info_line(test_campaign):
@@ -586,12 +671,25 @@ def html_info_line(test_campaign):
         return """Run %s from [%s] by <a href="http://www.secdev.org/projects/UTscapy/">UTscapy</a><br>""" % (time.ctime(), filename)  # noqa: E501
 
 
+def latex_info_line(test_campaign):
+    filename = test_campaign.filename
+    if filename is None:
+        return """by UTscapy""", """%s""" % time.ctime()
+    else:
+        return """from %s by UTscapy""" % tex_escape(filename), """%s""" % time.ctime()
+
+
 #    CAMPAIGN TO something    #
 
-def campaign_to_TEXT(test_campaign):
-    output = "%(title)s\n" % test_campaign
-    output += "-- " + info_line(test_campaign) + "\n\n"
-    output += "Passed=%(passed)i\nFailed=%(failed)i\n\n%(headcomments)s\n" % test_campaign
+def campaign_to_TEXT(test_campaign, theme):
+    ptheme = [lambda x: x, theme.success][bool(test_campaign.passed)]
+    ftheme = [lambda x: x, theme.fail][bool(test_campaign.failed)]
+
+    output = theme.green("\n%(title)s\n" % test_campaign)
+    output += dash + " " + info_line(test_campaign, theme) + "\n"
+    output += ptheme(" " + arrow + " Passed=%(passed)i\n" % test_campaign)
+    output += ftheme(" " + arrow + " Failed=%(failed)i\n" % test_campaign)
+    output += "%(headcomments)s\n" % test_campaign
 
     for testset in test_campaign:
         if any(t.expand for t in testset):
@@ -603,16 +701,16 @@ def campaign_to_TEXT(test_campaign):
     return output
 
 
-def campaign_to_ANSI(test_campaign):
-    return campaign_to_TEXT(test_campaign)
+def campaign_to_ANSI(test_campaign, theme):
+    return campaign_to_TEXT(test_campaign, theme)
 
 
 def campaign_to_xUNIT(test_campaign):
     output = '<?xml version="1.0" encoding="UTF-8" ?>\n<testsuite>\n'
     for testset in test_campaign:
         for t in testset:
-            output += ' <testcase classname="%s"\n' % testset.name.encode("string_escape").replace('"', ' ')  # noqa: E501
-            output += '           name="%s"\n' % t.name.encode("string_escape").replace('"', ' ')  # noqa: E501
+            output += ' <testcase classname="%s"\n' % testset.name.replace('"', ' ')  # noqa: E501
+            output += '           name="%s"\n' % t.name.replace('"', ' ')  # noqa: E501
             output += '           duration="0">\n' % t
             if not t:
                 output += '<error><![CDATA[%(output)s]]></error>\n' % t
@@ -710,19 +808,9 @@ def pack_html_campaigns(runned_campaigns, data, local=False, title=None):
 
 
 def campaign_to_LATEX(test_campaign):
-    output = r"""\documentclass{report}
-\usepackage{alltt}
-\usepackage{xcolor}
-\usepackage{a4wide}
-\usepackage{hyperref}
-
-\title{%(title)s}
-\date{%%s}
-
-\begin{document}
-\maketitle
-\tableofcontents
-
+    output = r"""
+\chapter{%(title)s}
+Run %%s on \date{%%s}
 \begin{description}
 \item[Passed:] %(passed)i
 \item[Failed:] %(failed)i
@@ -731,15 +819,16 @@ def campaign_to_LATEX(test_campaign):
 %(headcomments)s
 
 """ % test_campaign
-    output %= info_line(test_campaign)
+    output %= latex_info_line(test_campaign)
 
     for testset in test_campaign:
-        output += "\\chapter{%(name)s}\n\n%(comments)s\n\n" % testset
+        output += "\\section{%(name)s}\n\n%(comments)s\n\n" % testset
         for t in testset:
+            t.comments = tex_escape(t.comments)
             if t.expand:
-                output += r"""\section{%(name)s}
+                output += r"""\subsection{%(name)s}
 
-[%(num)03i] [%(result)s]
+Test result: \textbf{%(result)s}\newline
 
 %(comments)s
 \begin{alltt}
@@ -748,14 +837,37 @@ def campaign_to_LATEX(test_campaign):
 
 """ % t
 
-    output += "\\end{document}\n"
+    return output
+
+
+def pack_latex_campaigns(runned_campaigns, data, local=False, title=None):
+    output = r"""
+\documentclass{report}
+\usepackage{alltt}
+\usepackage{xcolor}
+\usepackage{a4wide}
+\usepackage{hyperref}
+
+\title{%(title)s}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+%(data)s
+\end{document}\n
+"""
+
+    out_dict = {'data': data, 'title': title if title else "UTScapy tests"}
+
+    output %= out_dict
     return output
 
 
 # USAGE #
 
 def usage():
-    print("""Usage: UTscapy [-m module] [-f {text|ansi|HTML|LaTeX|live}] [-o output_file]
+    print("""Usage: UTscapy [-m module] [-f {text|ansi|HTML|LaTeX|xUnit|live}] [-o output_file]
                [-t testfile] [-T testfile] [-k keywords [-k ...]] [-K keywords [-K ...]]
                [-l] [-b] [-d|-D] [-F] [-q[q]] [-i] [-P preexecute_python_code]
                [-c configfile]
@@ -779,16 +891,24 @@ def usage():
 -k <kw1>,<kw2>,...\t: include only tests with one of those keywords (can be used many times)
 -K <kw1>,<kw2>,...\t: remove tests with one of those keywords (can be used many times)
 -P <preexecute_python_code>
-""", file=sys.stderr)
+""")
     raise SystemExit
 
 
 #    MAIN    #
 
 def execute_campaign(TESTFILE, OUTPUTFILE, PREEXEC, NUM, KW_OK, KW_KO, DUMP, DOCS,
-                     FORMAT, VERB, ONLYFAILED, CRC, INTERPRETER, autorun_func, pos_begin=0, ignore_globals=None, scapy_ses=None):  # noqa: E501
+                     FORMAT, VERB, ONLYFAILED, CRC, INTERPRETER,
+                     autorun_func, theme, pos_begin=0,
+                     scapy_ses=None):  # noqa: E501
     # Parse test file
-    test_campaign = parse_campaign_file(TESTFILE)
+    try:
+        test_campaign = parse_campaign_file(TESTFILE)
+    except ValueError as ex:
+        print(
+            theme.red("Error while parsing '%s': '%s'" % (TESTFILE.name, ex))
+        )
+        sys.exit(1)
 
     # Report parameters
     if PREEXEC:
@@ -820,7 +940,12 @@ def execute_campaign(TESTFILE, OUTPUTFILE, PREEXEC, NUM, KW_OK, KW_KO, DUMP, DOC
 
     # Run tests
     test_campaign.output_file = OUTPUTFILE
-    result = run_campaign(test_campaign, autorun_func[FORMAT], drop_to_interpreter=INTERPRETER, verb=VERB, ignore_globals=None, scapy_ses=scapy_ses)  # noqa: E501
+    result = run_campaign(
+        test_campaign, autorun_func[FORMAT], theme,
+        drop_to_interpreter=INTERPRETER,
+        verb=VERB,
+        scapy_ses=scapy_ses
+    )
 
     # Shrink passed
     if ONLYFAILED:
@@ -832,9 +957,9 @@ def execute_campaign(TESTFILE, OUTPUTFILE, PREEXEC, NUM, KW_OK, KW_KO, DUMP, DOC
 
     # Generate report
     if FORMAT == Format.TEXT:
-        output = campaign_to_TEXT(test_campaign)
+        output = campaign_to_TEXT(test_campaign, theme)
     elif FORMAT == Format.ANSI:
-        output = campaign_to_ANSI(test_campaign)
+        output = campaign_to_ANSI(test_campaign, theme)
     elif FORMAT == Format.HTML:
         test_campaign.startNum(pos_begin)
         output = campaign_to_HTML(test_campaign)
@@ -852,7 +977,7 @@ def resolve_testfiles(TESTFILES):
     for tfile in TESTFILES[:]:
         if "*" in tfile:
             TESTFILES.remove(tfile)
-            TESTFILES.extend(glob.glob(tfile))
+            TESTFILES.extend(sorted(glob.glob(tfile)))
     return TESTFILES
 
 
@@ -860,7 +985,11 @@ def main():
     argv = sys.argv[1:]
     logger = logging.getLogger("scapy")
     logger.addHandler(logging.StreamHandler())
-    ignore_globals = list(six.moves.builtins.__dict__)
+
+    import scapy
+    print(dash + " UTScapy - Scapy %s - %s" % (
+        scapy.__version__, sys.version.split(" ")[0]
+    ))
 
     # Parse arguments
 
@@ -968,62 +1097,66 @@ def main():
             elif opt == "-K":
                 KW_KO.extend(optarg.split(","))
 
-        # Disable tests if needed
-
-        # Discard Python3 tests when using Python2
-        if six.PY2:
-            KW_KO.append("python3_only")
-            if VERB > 2:
-                print("### Python 2 mode ###")
-        try:
-            if NON_ROOT or os.getuid() != 0:  # Non root
-                # Discard root tests
-                KW_KO.append("netaccess")
-                KW_KO.append("needs_root")
-                if VERB > 2:
-                    print("### Non-root mode ###")
-        except AttributeError:
-            pass
-
-        if conf.use_pcap:
-            KW_KO.append("not_pcapdnet")
-            if VERB > 2:
-                print("### libpcap mode ###")
-
-        # Process extras
-        if six.PY3:
-            KW_KO.append("FIXME_py3")
-
-        if ANNOTATIONS_MODE:
-            try:
-                from pyannotate_runtime import collect_types
-            except ImportError:
-                raise ImportError("Please install pyannotate !")
-            collect_types.init_types_collection()
-            collect_types.start()
-
-        if VERB > 2:
-            print("### Booting scapy...", file=sys.stderr)
-        try:
-            from scapy import all as scapy
-        except Exception as e:
-            print("[CRITICAL]: Cannot import Scapy: %s" % e, file=sys.stderr)
-            traceback.print_exc()
-            sys.exit(1)  # Abort the tests
-
-        for m in MODULES:
-            try:
-                mod = import_module(m)
-                six.moves.builtins.__dict__.update(mod.__dict__)
-            except ImportError as e:
-                raise getopt.GetoptError("cannot import [%s]: %s" % (m, e))
-
-        # Add SCAPY_ROOT_DIR environment variable, used for tests
-        os.environ['SCAPY_ROOT_DIR'] = os.environ.get("PWD", os.getcwd())
-
     except getopt.GetoptError as msg:
-        print("ERROR:", msg, file=sys.stderr)
+        print("ERROR:", msg)
         raise SystemExit
+
+    if FORMAT in [Format.LIVE, Format.ANSI]:
+        theme = DefaultTheme()
+    else:
+        theme = BlackAndWhite()
+
+    # Disable tests if needed
+
+    # Discard Python3 tests when using Python2
+    if six.PY2:
+        KW_KO.append("python3_only")
+        if VERB > 2:
+            print(" " + arrow + " Python 2 mode")
+    try:
+        if NON_ROOT or os.getuid() != 0:  # Non root
+            # Discard root tests
+            KW_KO.append("needs_root")
+            if VERB > 2:
+                print(" " + arrow + " Non-root mode")
+    except AttributeError:
+        pass
+
+    if conf.use_pcap or WINDOWS:
+        KW_KO.append("not_libpcap")
+        if VERB > 2:
+            print(" " + arrow + " libpcap mode")
+
+    KW_KO.append("disabled")
+
+    # Process extras
+    if six.PY2 and DARWIN:
+        # On MacOS 12, Python 2.7 find_library is broken
+        KW_KO.append("libpcap")
+
+    if ANNOTATIONS_MODE:
+        try:
+            from pyannotate_runtime import collect_types
+        except ImportError:
+            raise ImportError("Please install pyannotate !")
+        collect_types.init_types_collection()
+        collect_types.start()
+
+    if VERB > 2:
+        print(" " + arrow + " Booting scapy...")
+    try:
+        from scapy import all as scapy
+    except Exception as e:
+        print("[CRITICAL]: Cannot import Scapy: %s" % e)
+        traceback.print_exc()
+        sys.exit(1)  # Abort the tests
+
+    for m in MODULES:
+        try:
+            mod = import_module(m)
+            six.moves.builtins.__dict__.update(mod.__dict__)
+        except ImportError as e:
+            raise getopt.GetoptError("cannot import [%s]: %s" % (m, e))
 
     autorun_func = {
         Format.TEXT: scapy.autorun_get_text_interactive_session,
@@ -1035,7 +1168,7 @@ def main():
     }
 
     if VERB > 2:
-        print("### Starting tests...", file=sys.stderr)
+        print(" " + arrow + " Discovering tests files...")
 
     glob_output = ""
     glob_result = 0
@@ -1056,19 +1189,23 @@ def main():
 
     runned_campaigns = []
 
-    scapy_ses = importlib.import_module(".all", "scapy").__dict__
+    from scapy.main import _scapy_builtins
+    scapy_ses = _scapy_builtins()
     import_UTscapy_tools(scapy_ses)
 
     # Execute all files
     for TESTFILE in TESTFILES:
         if VERB > 2:
-            print("### Loading:", TESTFILE, file=sys.stderr)
+            print(theme.green(dash + " Loading: %s" % TESTFILE))
         PREEXEC = PREEXEC_DICT[TESTFILE] if TESTFILE in PREEXEC_DICT else GLOB_PREEXEC
         with open(TESTFILE) as testfile:
             output, result, campaign = execute_campaign(
                 testfile, OUTPUTFILE, PREEXEC, NUM, KW_OK, KW_KO, DUMP, DOCS,
-                FORMAT, VERB, ONLYFAILED, CRC, INTERPRETER, autorun_func,
-                pos_begin, ignore_globals, copy.copy(scapy_ses))
+                FORMAT, VERB, ONLYFAILED, CRC, INTERPRETER,
+                autorun_func, theme,
+                pos_begin=pos_begin,
+                scapy_ses=copy.copy(scapy_ses)
+            )
         runned_campaigns.append(campaign)
         pos_begin = campaign.end_pos
         if UNIQUE:
@@ -1080,7 +1217,9 @@ def main():
                 break
 
     if VERB > 2:
-        print("### Writing output...", file=sys.stderr)
+        print(
+            checkmark + " All campaigns executed. Writing output..."
+        )
 
     if ANNOTATIONS_MODE:
         collect_types.stop()
@@ -1089,20 +1228,38 @@ def main():
     # Concenate outputs
     if FORMAT == Format.HTML:
         glob_output = pack_html_campaigns(runned_campaigns, glob_output, LOCAL, glob_title)
+    if FORMAT == Format.LATEX:
+        glob_output = pack_latex_campaigns(runned_campaigns, glob_output, LOCAL, glob_title)
 
     # Write the final output
     # Note: on Python 2, we force-encode to ignore ascii errors
     # on Python 3, we need to detect the type of stream
     if OUTPUTFILE == sys.stdout:
-        OUTPUTFILE.write(glob_output.encode("utf8", "ignore")
-                         if 'b' in OUTPUTFILE.mode or six.PY2 else glob_output)
+        print(glob_output, file=OUTPUTFILE)
     else:
         with open(OUTPUTFILE, "wb") as f:
             f.write(glob_output.encode("utf8", "ignore")
                     if 'b' in f.mode or six.PY2 else glob_output)
 
-    # Delete scapy's test environment vars
-    del os.environ['SCAPY_ROOT_DIR']
+    # Print end message
+    if VERB > 2:
+        if glob_result == 0:
+            print(theme.green("UTscapy ended successfully"))
+        else:
+            print(theme.red("UTscapy ended with error code %s" % glob_result))
+
+    # Check active threads
+    if VERB > 2:
+        if threading.active_count() > 1:
+            print("\nWARNING: UNFINISHED THREADS")
+            print(threading.enumerate())
+        import multiprocessing
+        processes = multiprocessing.active_children()
+        if processes:
+            print("\nWARNING: UNFINISHED PROCESSES")
+            print(processes)
+
+    sys.stdout.flush()
 
     # Return state
     return glob_result

@@ -1,7 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Philippe Biondi <phil@secdev.org>
-# This program is published under a GPLv2 license
 
 """
 Global variables and functions for handling external data sets.
@@ -9,7 +9,6 @@ Global variables and functions for handling external data sets.
 
 import calendar
 import os
-import re
 import warnings
 
 
@@ -17,7 +16,19 @@ from scapy.dadict import DADict, fixname
 from scapy.consts import FREEBSD, NETBSD, OPENBSD, WINDOWS
 from scapy.error import log_loading
 from scapy.compat import plain_str
-import scapy.modules.six as six
+import scapy.libs.six as six
+
+from scapy.compat import (
+    Any,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+    Union,
+    cast,
+)
 
 
 ############
@@ -107,8 +118,12 @@ DLT_AX25_KISS = 202
 DLT_PPP_WITH_DIR = 204
 DLT_FC_2 = 224
 DLT_CAN_SOCKETCAN = 227
-DLT_IPV4 = 228
-DLT_IPV6 = 229
+if OPENBSD:
+    DLT_IPV4 = DLT_RAW
+    DLT_IPV6 = DLT_RAW
+else:
+    DLT_IPV4 = 228
+    DLT_IPV6 = 229
 DLT_IEEE802_15_4_NOFCS = 230
 DLT_USBPCAP = 249
 DLT_NETLINK = 253
@@ -117,6 +132,7 @@ DLT_BLUETOOTH_LE_LL = 251
 DLT_BLUETOOTH_LE_LL_WITH_PHDR = 256
 DLT_VSOCK = 271
 DLT_ETHERNET_MPACKET = 274
+DLT_LINUX_SLL2 = 276
 
 # From net/ipv6.h on Linux (+ Additions)
 IPV6_ADDR_UNICAST = 0x01
@@ -273,12 +289,14 @@ IANA_ENTERPRISE_NUMBERS = {
 }
 
 
-def load_protocols(filename, _fallback=None, _integer_base=10, _cls=DADict):
+def load_protocols(filename, _fallback=None, _integer_base=10,
+                   _cls=DADict[int, str]):
+    # type: (str, Optional[bytes], int, type) -> DADict[int, str]
     """"Parse /etc/protocols and return values as a dictionary."""
-    spaces = re.compile(b"[ \t]+|\n")
-    dct = _cls(_name=filename)
+    dct = _cls(_name=filename)  # type: DADict[int, str]
 
     def _process_data(fdesc):
+        # type: (Iterator[bytes]) -> None
         for line in fdesc:
             try:
                 shrp = line.find(b"#")
@@ -287,7 +305,7 @@ def load_protocols(filename, _fallback=None, _integer_base=10, _cls=DADict):
                 line = line.strip()
                 if not line:
                     continue
-                lt = tuple(re.split(spaces, line))
+                lt = tuple(line.split())
                 if len(lt) < 2 or not lt[0]:
                     continue
                 dct[int(lt[1], _integer_base)] = fixname(lt[0])
@@ -305,16 +323,17 @@ def load_protocols(filename, _fallback=None, _integer_base=10, _cls=DADict):
             _process_data(fdesc)
     except IOError:
         if _fallback:
-            _process_data(_fallback.split(b"\n"))
+            _process_data(iter(_fallback.split(b"\n")))
         else:
             log_loading.info("Can't open %s file", filename)
     return dct
 
 
-class EtherDA(DADict):
+class EtherDA(DADict[int, str]):
     # Backward compatibility: accept
     # ETHER_TYPES["MY_GREAT_TYPE"] = 12
     def __setitem__(self, attr, val):
+        # type: (int, str) -> None
         if isinstance(attr, str):
             attr, val = val, attr
             warnings.warn(
@@ -324,6 +343,7 @@ class EtherDA(DADict):
         super(EtherDA, self).__setitem__(attr, val)
 
     def __getitem__(self, attr):
+        # type: (int) -> Any
         if isinstance(attr, str):
             warnings.warn(
                 "Please use 'ETHER_TYPES.%s'" % attr,
@@ -334,19 +354,27 @@ class EtherDA(DADict):
 
 
 def load_ethertypes(filename):
+    # type: (Optional[str]) -> EtherDA
     """"Parse /etc/ethertypes and return values as a dictionary.
     If unavailable, use the copy bundled with Scapy."""
     from scapy.libs.ethertypes import DATA
-    return load_protocols(filename or "Scapy's backup ETHER_TYPES",
+    prot = load_protocols(filename or "Scapy's backup ETHER_TYPES",
                           _fallback=DATA,
                           _integer_base=16,
                           _cls=EtherDA)
+    return cast(EtherDA, prot)
 
 
 def load_services(filename):
-    spaces = re.compile(b"[ \t]+|\n")
-    tdct = DADict(_name="%s-tcp" % filename)
-    udct = DADict(_name="%s-udp" % filename)
+    # type: (str) -> Tuple[DADict[int, str], DADict[int, str], DADict[int, str]]  # noqa: E501
+    tdct = DADict(_name="%s-tcp" % filename)  # type: DADict[int, str]
+    udct = DADict(_name="%s-udp" % filename)  # type: DADict[int, str]
+    sdct = DADict(_name="%s-sctp" % filename)  # type: DADict[int, str]
+    dcts = {
+        b"tcp": tdct,
+        b"udp": udct,
+        b"sctp": sdct,
+    }
     try:
         with open(filename, "rb") as fdesc:
             for line in fdesc:
@@ -357,17 +385,16 @@ def load_services(filename):
                     line = line.strip()
                     if not line:
                         continue
-                    lt = tuple(re.split(spaces, line))
+                    lt = tuple(line.split())
                     if len(lt) < 2 or not lt[0]:
                         continue
-                    dtct = None
-                    if lt[1].endswith(b"/tcp"):
-                        dtct = tdct
-                    elif lt[1].endswith(b"/udp"):
-                        dtct = udct
-                    else:
+                    if b"/" not in lt[1]:
                         continue
-                    port = lt[1].split(b'/')[0]
+                    port, proto = lt[1].split(b"/", 1)
+                    try:
+                        dtct = dcts[proto]
+                    except KeyError:
+                        continue
                     name = fixname(lt[0])
                     if b"-" in port:
                         sport, eport = port.split(b"-")
@@ -384,35 +411,41 @@ def load_services(filename):
                     )
     except IOError:
         log_loading.info("Can't open /etc/services file")
-    return tdct, udct
+    return tdct, udct, sdct
 
 
-class ManufDA(DADict):
+class ManufDA(DADict[str, Tuple[str, str]]):
     def ident(self, v):
+        # type: (Any) -> str
         return fixname(v[0] if isinstance(v, tuple) else v)
 
     def _get_manuf_couple(self, mac):
+        # type: (str) -> Tuple[str, str]
         oui = ":".join(mac.split(":")[:3]).upper()
-        return self.__dict__.get(oui, (mac, mac))
+        return self.d.get(oui, (mac, mac))
 
     def _get_manuf(self, mac):
+        # type: (str) -> str
         return self._get_manuf_couple(mac)[1]
 
     def _get_short_manuf(self, mac):
+        # type: (str) -> str
         return self._get_manuf_couple(mac)[0]
 
     def _resolve_MAC(self, mac):
+        # type: (str) -> str
         oui = ":".join(mac.split(":")[:3]).upper()
         if oui in self:
             return ":".join([self[oui][0]] + mac.split(":")[3:])
         return mac
 
     def lookup(self, mac):
+        # type: (str) -> Tuple[str, str]
         """Find OUI name matching to a MAC"""
-        oui = ":".join(mac.split(":")[:3]).upper()
-        return self[oui]
+        return self._get_manuf_couple(mac)
 
     def reverse_lookup(self, name, case_sensitive=False):
+        # type: (str, bool) -> Dict[str, str]
         """
         Find all MACs registered to a OUI
 
@@ -421,14 +454,15 @@ class ManufDA(DADict):
         :returns: a dict of mac:tuples (Name, Extended Name)
         """
         if case_sensitive:
-            filtr = lambda x, l: any(x == z for z in l)
+            filtr = lambda x, l: any(x in z for z in l)  # type: Callable[[str, Tuple[str, str]], bool]  # noqa: E501
         else:
             name = name.lower()
-            filtr = lambda x, l: any(x == z.lower() for z in l)
-        return {k: v for k, v in six.iteritems(self.__dict__)
+            filtr = lambda x, l: any(x in z.lower() for z in l)
+        return {k: v for k, v in six.iteritems(self.d)
                 if filtr(name, v)}
 
     def __dir__(self):
+        # type: () -> List[str]
         return [
             "_get_manuf",
             "_get_short_manuf",
@@ -439,6 +473,7 @@ class ManufDA(DADict):
 
 
 def load_manuf(filename):
+    # type: (str) -> ManufDA
     """
     Loads manuf file from Wireshark.
 
@@ -465,23 +500,37 @@ def load_manuf(filename):
 
 
 def select_path(directories, filename):
+    # type: (List[str], str) -> Optional[str]
     """Find filename among several directories"""
     for directory in directories:
         path = os.path.join(directory, filename)
         if os.path.exists(path):
             return path
+    return None
 
 
 if WINDOWS:
-    IP_PROTOS = load_protocols(os.environ["SystemRoot"] + "\\system32\\drivers\\etc\\protocol")  # noqa: E501
-    TCP_SERVICES, UDP_SERVICES = load_services(os.environ["SystemRoot"] + "\\system32\\drivers\\etc\\services")  # noqa: E501
+    IP_PROTOS = load_protocols(os.path.join(
+        os.environ["SystemRoot"],
+        "system32",
+        "drivers",
+        "etc",
+        "protocol",
+    ))
+    TCP_SERVICES, UDP_SERVICES, SCTP_SERVICES = load_services(os.path.join(
+        os.environ["SystemRoot"],
+        "system32",
+        "drivers",
+        "etc",
+        "services",
+    ))
     # Default values, will be updated by arch.windows
     ETHER_TYPES = load_ethertypes(None)
     MANUFDB = ManufDA()
 else:
     IP_PROTOS = load_protocols("/etc/protocols")
     ETHER_TYPES = load_ethertypes("/etc/ethertypes")
-    TCP_SERVICES, UDP_SERVICES = load_services("/etc/services")
+    TCP_SERVICES, UDP_SERVICES, SCTP_SERVICES = load_services("/etc/services")
     MANUFDB = ManufDA()
     manuf_path = select_path(
         ['/usr', '/usr/local', '/opt', '/opt/wireshark',
@@ -498,16 +547,21 @@ else:
 #####################
 #  knowledge bases  #
 #####################
+KBBaseType = Optional[Union[str, List[Tuple[str, Dict[str, Dict[str, str]]]]]]
 
-class KnowledgeBase:
+
+class KnowledgeBase(object):
     def __init__(self, filename):
+        # type: (Optional[Any]) -> None
         self.filename = filename
-        self.base = None
+        self.base = None  # type: KBBaseType
 
     def lazy_init(self):
+        # type: () -> None
         self.base = ""
 
     def reload(self, filename=None):
+        # type: (Optional[Any]) -> None
         if filename is not None:
             self.filename = filename
         oldbase = self.base
@@ -517,6 +571,7 @@ class KnowledgeBase:
             self.base = oldbase
 
     def get_base(self):
+        # type: () -> Union[str, List[Tuple[str, Dict[str,Dict[str,str]]]]]
         if self.base is None:
             self.lazy_init()
-        return self.base
+        return cast(Union[str, List[Tuple[str, Dict[str, Dict[str, str]]]]], self.base)

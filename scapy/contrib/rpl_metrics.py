@@ -1,22 +1,8 @@
-# This file is part of Scapy.
-# See http://www.secdev.org/projects/scapy for more information.
-#
-# Scapy is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 2 of the License, or
-# (at your option) any later version.
-#
-# Scapy is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Scapy.  If not, see <http://www.gnu.org/licenses/>.
-#
+# SPDX-License-Identifier: GPL-2.0-or-later
+# This file is part of Scapy
+# See https://scapy.net/ for more information
 # Copyright (C) 2020 Rahul Jadhav <nyrahul@gmail.com>
 
-# RFC 6551
 # scapy.contrib.description = Routing Metrics used for Path Calc in LLNs
 # scapy.contrib.status = loads
 
@@ -96,6 +82,16 @@ class DAGMCObj(Packet):
     Set the length field in DAG Metric Constraint Control Option
     """
     name = 'Dummy DAG MC Object'
+    # RFC 6551 - 2.1
+    fields_desc = [ByteEnumField("otype", 0, DAGMC_OBJTYPE),
+                   BitField("resflags", 0, 5),
+                   BitField("P", 0, 1),
+                   BitField("C", 0, 1),
+                   BitField("O", 0, 1),
+                   BitField("R", 0, 1),
+                   BitEnumField("A", 0, 3, AGG_RTMETRIC),
+                   BitField("prec", 0, 4),
+                   ByteField("len", None)]
 
     def post_build(self, pkt, pay):
         pkt += pay
@@ -111,20 +107,15 @@ class RPLDAGMCNSA(DAGMCObj):
     DAG Metric: Node State and Attributes
     """
     name = "Node State and Attributes"
-    fields_desc = [ByteEnumField("otype", 1, DAGMC_OBJTYPE),
-                   BitField("resflags", 0, 5),
-                   BitField("P", 0, 1),
-                   BitField("C", 0, 1),
-                   BitField("O", 0, 1),
-                   BitField("R", 0, 1),
-                   BitEnumField("A", 0, 3, AGG_RTMETRIC),
-                   BitField("prec", 0, 4),
-                   ByteField("len", None),
-                   # NSA Object Body Format
-                   ByteField("res", 0),
-                   BitField("flags", 0, 6),
-                   BitField("A", 0, 1),
-                   BitField("O", 0, 1)]
+    otype = 1
+    # RFC 6551 - 3.1
+    fields_desc = DAGMCObj.fields_desc + [
+        # NSA Object Body Format
+        ByteField("res", 0),
+        BitField("flags", 0, 6),
+        BitField("Agg", 0, 1),  # A
+        BitField("Overload", 0, 1),  # O
+    ]
 
 
 class RPLDAGMCNodeEnergy(DAGMCObj):
@@ -132,21 +123,16 @@ class RPLDAGMCNodeEnergy(DAGMCObj):
     DAG Metric: Node Energy
     """
     name = "Node Energy"
-    fields_desc = [ByteEnumField("otype", 2, DAGMC_OBJTYPE),
-                   BitField("resflags", 0, 5),
-                   BitField("P", 0, 1),
-                   BitField("C", 0, 1),
-                   BitField("O", 0, 1),
-                   BitField("R", 0, 1),
-                   BitEnumField("A", 0, 3, AGG_RTMETRIC),
-                   BitField("prec", 0, 4),
-                   ByteField("len", None),
-                   # NE Sub-Object Format
-                   BitField("flags", 0, 4),
-                   BitField("I", 0, 1),
-                   BitField("T", 0, 2),
-                   BitField("E", 0, 1),
-                   ByteField("E_E", 0)]
+    otype = 2
+    # RFC 6551 - 3.2
+    fields_desc = DAGMCObj.fields_desc + [
+        # NE Sub-Object Format
+        BitField("flags", 0, 4),
+        BitField("I", 0, 1),
+        BitField("T", 0, 2),
+        BitField("E", 0, 1),
+        ByteField("E_E", 0)
+    ]
 
 
 class RPLDAGMCHopCount(DAGMCObj):
@@ -154,19 +140,14 @@ class RPLDAGMCHopCount(DAGMCObj):
     DAG Metric: Hop Count
     """
     name = "Hop Count"
-    fields_desc = [ByteEnumField("otype", 3, DAGMC_OBJTYPE),
-                   BitField("resflags", 0, 5),
-                   BitField("P", 0, 1),
-                   BitField("C", 0, 1),
-                   BitField("O", 0, 1),
-                   BitField("R", 0, 1),
-                   BitEnumField("A", 0, 3, AGG_RTMETRIC),
-                   BitField("prec", 0, 4),
-                   ByteField("len", None),
-                   # Sub-Object Format
-                   BitField("res", 0, 4),
-                   BitField("flags", 0, 4),
-                   ByteField("HopCount", 1)]
+    otype = 3
+    # RFC 6551 - 3.3
+    fields_desc = DAGMCObj.fields_desc + [
+        # Sub-Object Format
+        BitField("res", 0, 4),
+        BitField("flags", 0, 4),
+        ByteField("HopCount", 1)
+    ]
 
 
 class RPLDAGMCLinkThroughput(DAGMCObj):
@@ -174,17 +155,12 @@ class RPLDAGMCLinkThroughput(DAGMCObj):
     DAG Metric: Link Throughput
     """
     name = "Link Throughput"
-    fields_desc = [ByteEnumField("otype", 4, DAGMC_OBJTYPE),
-                   BitField("resflags", 0, 5),
-                   BitField("P", 0, 1),
-                   BitField("C", 0, 1),
-                   BitField("O", 0, 1),
-                   BitField("R", 0, 1),
-                   BitEnumField("A", 0, 3, AGG_RTMETRIC),
-                   BitField("prec", 0, 4),
-                   ByteField("len", None),
-                   # Sub-Object Format
-                   IntField("Throughput", 1)]
+    otype = 4
+    # RFC 6551 - 4.1
+    fields_desc = DAGMCObj.fields_desc + [
+        # Sub-Object Format
+        IntField("Throughput", 1)
+    ]
 
 
 class RPLDAGMCLinkLatency(DAGMCObj):
@@ -192,17 +168,12 @@ class RPLDAGMCLinkLatency(DAGMCObj):
     DAG Metric: Link Latency
     """
     name = "Link Latency"
-    fields_desc = [ByteEnumField("otype", 5, DAGMC_OBJTYPE),
-                   BitField("resflags", 0, 5),
-                   BitField("P", 0, 1),
-                   BitField("C", 0, 1),
-                   BitField("O", 0, 1),
-                   BitField("R", 0, 1),
-                   BitEnumField("A", 0, 3, AGG_RTMETRIC),
-                   BitField("prec", 0, 4),
-                   ByteField("len", None),
-                   # NE Sub-Object Format
-                   IntField("Latency", 1)]
+    otype = 5
+    # RFC 6551 - 4.2
+    fields_desc = DAGMCObj.fields_desc + [
+        # NE Sub-Object Format
+        IntField("Latency", 1)
+    ]
 
 
 class RPLDAGMCLinkQualityLevel(DAGMCObj):
@@ -210,19 +181,14 @@ class RPLDAGMCLinkQualityLevel(DAGMCObj):
     DAG Metric: Link Quality Level (LQL)
     """
     name = "Link Quality Level"
-    fields_desc = [ByteEnumField("otype", 6, DAGMC_OBJTYPE),
-                   BitField("resflags", 0, 5),
-                   BitField("P", 0, 1),
-                   BitField("C", 0, 1),
-                   BitField("O", 0, 1),
-                   BitField("R", 0, 1),
-                   BitEnumField("A", 0, 3, AGG_RTMETRIC),
-                   BitField("prec", 0, 4),
-                   ByteField("len", None),
-                   # Sub-Object Format
-                   ByteField("res", 0),
-                   BitField("val", 0, 3),
-                   BitField("counter", 0, 5)]
+    otype = 6
+    # RFC 6551 - 4.3.1
+    fields_desc = DAGMCObj.fields_desc + [
+        # Sub-Object Format
+        ByteField("res", 0),
+        BitField("val", 0, 3),
+        BitField("counter", 0, 5)
+    ]
 
 
 class RPLDAGMCLinkETX(DAGMCObj):
@@ -230,17 +196,12 @@ class RPLDAGMCLinkETX(DAGMCObj):
     DAG Metric: Link ETX
     """
     name = "Link ETX"
-    fields_desc = [ByteEnumField("otype", 7, DAGMC_OBJTYPE),
-                   BitField("resflags", 0, 5),
-                   BitField("P", 0, 1),
-                   BitField("C", 0, 1),
-                   BitField("O", 0, 1),
-                   BitField("R", 0, 1),
-                   BitEnumField("A", 0, 3, AGG_RTMETRIC),
-                   BitField("prec", 0, 4),
-                   ByteField("len", None),
-                   # Sub-Object Format
-                   ShortField("ETX", 1)]
+    otype = 7
+    # RFC 6551 - 4.3.2
+    fields_desc = DAGMCObj.fields_desc + [
+        # Sub-Object Format
+        ShortField("ETX", 1)
+    ]
 
 
 # Note: Wireshark shows warning decoding LinkColor.
@@ -250,19 +211,14 @@ class RPLDAGMCLinkColor(DAGMCObj):
     DAG Metric: Link Color
     """
     name = "Link Color"
-    fields_desc = [ByteEnumField("otype", 8, DAGMC_OBJTYPE),
-                   BitField("resflags", 0, 5),
-                   BitField("P", 0, 1),
-                   BitField("C", 0, 1),
-                   BitField("O", 0, 1),
-                   BitField("R", 0, 1),
-                   BitEnumField("A", 0, 3, AGG_RTMETRIC),
-                   BitField("prec", 0, 4),
-                   ByteField("len", None),
-                   # Sub-Object Format
-                   ByteField("res", 0),
-                   BitField("color", 1, 10),
-                   BitField("counter", 1, 6)]
+    otype = 8
+    # RFC 6551 - 4.4.1
+    fields_desc = DAGMCObj.fields_desc + [
+        # Sub-Object Format
+        ByteField("res", 0),
+        BitField("color", 1, 10),
+        BitField("counter", 1, 6)
+    ]
 
 
 DAGMC_CLS = {1: RPLDAGMCNSA,

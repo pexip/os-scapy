@@ -1,7 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
+# See https://scapy.net/ for more information
 # Copyright (C) 2007, 2008, 2009 Arnaud Ebalard
-# 2015, 2016, 2017 Maxence Tury
-# This program is published under a GPLv2 license
+#               2015, 2016, 2017 Maxence Tury
 
 """
 TLS Pseudorandom Function.
@@ -13,7 +14,6 @@ from scapy.utils import strxor
 
 from scapy.layers.tls.crypto.hash import _tls_hash_algs
 from scapy.layers.tls.crypto.h_mac import _tls_hmac_algs
-from scapy.modules.six.moves import range
 from scapy.compat import bytes_encode
 
 
@@ -203,23 +203,32 @@ class PRF(object):
             elif hash_name == "SHA512":
                 self.prf = _tls12_SHA512PRF
             else:
+                if hash_name in ["MD5", "SHA"]:
+                    self.hash_name = "SHA256"
                 self.prf = _tls12_SHA256PRF
         else:
             warning("Unknown TLS version")
 
-    def compute_master_secret(self, pre_master_secret,
-                              client_random, server_random):
+    def compute_master_secret(self, pre_master_secret, client_random,
+                              server_random, extms=False, handshake_hash=None):
         """
         Return the 48-byte master_secret, computed from pre_master_secret,
         client_random and server_random. See RFC 5246, section 6.3.
+        Supports Extended Master Secret Derivation, see RFC 7627
         """
         seed = client_random + server_random
+        label = b'master secret'
+
+        if extms is True and handshake_hash is not None:
+            seed = handshake_hash
+            label = b'extended master secret'
+
         if self.tls_version < 0x0300:
             return None
         elif self.tls_version == 0x0300:
             return self.prf(pre_master_secret, seed, 48)
         else:
-            return self.prf(pre_master_secret, b"master secret", seed, 48)
+            return self.prf(pre_master_secret, label, seed, 48)
 
     def derive_key_block(self, master_secret, server_random,
                          client_random, req_len):
@@ -286,10 +295,7 @@ class PRF(object):
                 s2 = _tls_hash_algs["SHA"]().digest(handshake_msg)
                 verify_data = self.prf(master_secret, label, s1 + s2, 12)
             else:
-                if self.hash_name in ["MD5", "SHA"]:
-                    h = _tls_hash_algs["SHA256"]()
-                else:
-                    h = _tls_hash_algs[self.hash_name]()
+                h = _tls_hash_algs[self.hash_name]()
                 s = h.digest(handshake_msg)
                 verify_data = self.prf(master_secret, label, s, 12)
 

@@ -1,8 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
-# Copyright (C) Philippe Biondi <phil@secdev.org>
-# Copyright (C) Gabriel Potter <gabriel@potter.fr>
-# This program is published under a GPLv2 license
+# See https://scapy.net/ for more information
+# Copyright (C) Gabriel Potter <gabriel[]potter[]fr>
 
 """
 Default USB frames & Basic implementation
@@ -22,6 +21,8 @@ from scapy.error import warning
 from scapy.fields import ByteField, XByteField, ByteEnumField, LEShortField, \
     LEShortEnumField, LEIntField, LEIntEnumField, XLELongField, \
     LenField
+from scapy.interfaces import NetworkInterface, InterfaceProvider, \
+    network_name, IFACES
 from scapy.packet import Packet, bind_top_down
 from scapy.supersocket import SuperSocket
 from scapy.utils import PcapReader
@@ -111,14 +112,14 @@ class USBpcap(Packet):
     def guess_payload_class(self, payload):
         if self.headerLen == 27:
             # No Transfer layer
-            return conf.raw_layer
+            return super(USBpcap, self).guess_payload_class(payload)
         if self.transfer == 0:
             return USBpcapTransferIsochronous
         elif self.transfer == 1:
             return USBpcapTransferInterrupt
         elif self.transfer == 2:
             return USBpcapTransferControl
-        return conf.raw_layer
+        return super(USBpcap, self).guess_payload_class(payload)
 
 
 class USBpcapTransferIsochronous(Packet):
@@ -172,7 +173,7 @@ def _extcap_call(prog, args, keyword, values):
         if not ifa.startswith(keyword):
             continue
         res.append(tuple([re.search(r"{%s=([^}]*)}" % val, ifa).group(1)
-                   for val in values]))
+                          for val in values]))
     return res
 
 
@@ -190,6 +191,45 @@ if WINDOWS:
             "interface",
             ["value", "display"]
         )
+
+    class UsbpcapInterfaceProvider(InterfaceProvider):
+        name = "USBPcap"
+        headers = ("Index", "Name", "Address")
+        header_sort = 1
+
+        def load(self):
+            data = {}
+            try:
+                interfaces = get_usbpcap_interfaces()
+            except OSError:
+                return {}
+            for netw_name, name in interfaces:
+                index = re.search(r".*(\d+)", name)
+                if index:
+                    index = int(index.group(1)) + 100
+                else:
+                    index = 100
+                if_data = {
+                    "name": name,
+                    "network_name": netw_name,
+                    "description": name,
+                    "index": index,
+                }
+                data[netw_name] = NetworkInterface(self, if_data)
+            return data
+
+        def l2socket(self):
+            return conf.USBsocket
+        l2listen = l2socket
+
+        def l3socket(self):
+            raise ValueError("No L3 available for USBpcap !")
+
+        def _format(self, dev, **kwargs):
+            """Returns a tuple of the elements used by show()"""
+            return (str(dev.index), dev.name, dev.network_name)
+
+    IFACES.register_provider(UsbpcapInterfaceProvider)
 
     def get_usbpcap_devices(iface, enabled=True):
         """Return a list of devices on an USBpcap interface"""
@@ -217,15 +257,16 @@ if WINDOWS:
 
         @staticmethod
         def select(sockets, remain=None):
-            return sockets, None
+            return sockets
 
         def __init__(self, iface=None, *args, **karg):
             _usbpcap_check()
             if iface is None:
-                warning("Available interfaces: [%s]" %
+                warning("Available interfaces: [%s]",
                         " ".join(x[0] for x in get_usbpcap_interfaces()))
                 raise NameError("No interface specified !"
                                 " See get_usbpcap_interfaces()")
+            iface = network_name(iface)
             self.outs = None
             args = ['-d', iface, '-b', '134217728', '-A', '-o', '-']
             self.usbpcap_proc = subprocess.Popen(

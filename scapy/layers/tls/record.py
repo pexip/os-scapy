@@ -1,9 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
+# See https://scapy.net/ for more information
 # Copyright (C) 2007, 2008, 2009 Arnaud Ebalard
 #               2015, 2016, 2017 Maxence Tury
 #               2019 Romain Perez
 #               2019 Gabriel Potter
-# This program is published under a GPLv2 license
 
 """
 Common TLS fields & bindings.
@@ -36,7 +37,7 @@ from scapy.layers.tls.crypto.cipher_aead import AEADTagError
 from scapy.layers.tls.crypto.cipher_stream import Cipher_NULL
 from scapy.layers.tls.crypto.common import CipherError
 from scapy.layers.tls.crypto.h_mac import HMACError
-import scapy.modules.six as six
+import scapy.libs.six as six
 if conf.crypto_valid_advanced:
     from scapy.layers.tls.crypto.cipher_aead import Cipher_CHACHA20_POLY1305
 
@@ -76,7 +77,7 @@ class _TLSMsgListField(PacketListField):
     def __init__(self, name, default, length_from=None):
         if not length_from:
             length_from = self._get_length
-        super(_TLSMsgListField, self).__init__(name, default, cls=None,
+        super(_TLSMsgListField, self).__init__(name, default, None,
                                                length_from=length_from)
 
     def _get_length(self, pkt):
@@ -93,9 +94,16 @@ class _TLSMsgListField(PacketListField):
         if pkt.type == 22:
             if len(m) >= 1:
                 msgtype = orb(m[0])
-                if ((pkt.tls_session.advertised_tls_version == 0x0304) or
-                        (pkt.tls_session.tls_version and
-                         pkt.tls_session.tls_version == 0x0304)):
+                # If a version was agreed on by both client and server,
+                # we use it (tls_session.tls_version)
+                # Otherwise, if the client advertised for TLS 1.3, we try to
+                # dissect the following packets (most likely, server hello)
+                # using TLS 1.3. The serverhello is able to fallback on
+                # TLS 1.2 if necessary. In any case, this will set the agreed
+                # version so that all future packets are correct.
+                if ((pkt.tls_session.advertised_tls_version == 0x0304 and
+                        pkt.tls_session.tls_version is None) or
+                        pkt.tls_session.tls_version == 0x0304):
                     cls = _tls13_handshake_cls.get(msgtype, Raw)
                 else:
                     cls = _tls_handshake_cls.get(msgtype, Raw)
@@ -331,8 +339,11 @@ class TLS(_GenericTLSSessionInheritance):
                     return _TLSEncryptedContent
                 # Check TLS 1.3
                 if s and _tls_version_check(s.tls_version, 0x0304):
-                    if (s.rcs and not isinstance(s.rcs.cipher, Cipher_NULL) and
-                            byte0 == 0x17):
+                    _has_cipher = lambda x: (
+                        x and not isinstance(x.cipher, Cipher_NULL)
+                    )
+                    if (_has_cipher(s.rcs) or _has_cipher(s.prcs)) and \
+                            byte0 == 0x17:
                         from scapy.layers.tls.record_tls13 import TLS13
                         return TLS13
             if plen < 5:
@@ -438,8 +449,31 @@ class TLS(_GenericTLSSessionInheritance):
 
         cipher_type = self.tls_session.rcs.cipher.type
 
+        def extract_mac(data):
+            """Extract MAC."""
+            tmp_len = self.tls_session.rcs.mac_len
+            if tmp_len != 0:
+                frag, mac = data[:-tmp_len], data[-tmp_len:]
+            else:
+                frag, mac = data, b""
+            return frag, mac
+
+        def verify_mac(hdr, cfrag, mac):
+            """Verify integrity."""
+            chdr = hdr[:3] + struct.pack('!H', len(cfrag))
+            is_mac_ok = self._tls_hmac_verify(chdr, cfrag, mac)
+            if not is_mac_ok:
+                pkt_info = self.firstlayer().summary()
+                log_runtime.info(
+                    "TLS: record integrity check failed [%s]", pkt_info,
+                )
+
         if cipher_type == 'block':
             version = struct.unpack("!H", s[1:3])[0]
+
+            if self.tls_session.encrypt_then_mac:
+                efrag, mac = extract_mac(efrag)
+                verify_mac(hdr, efrag, mac)
 
             # Decrypt
             try:
@@ -474,19 +508,11 @@ class TLS(_GenericTLSSessionInheritance):
                 mfrag, pad = pfrag[:-padlen], pfrag[-padlen:]
                 self.padlen = padlen
 
-                # Extract MAC
-                tmp_len = self.tls_session.rcs.mac_len
-                if tmp_len != 0:
-                    cfrag, mac = mfrag[:-tmp_len], mfrag[-tmp_len:]
+                if self.tls_session.encrypt_then_mac:
+                    cfrag = mfrag
                 else:
-                    cfrag, mac = mfrag, b""
-
-                # Verify integrity
-                chdr = hdr[:3] + struct.pack('!H', len(cfrag))
-                is_mac_ok = self._tls_hmac_verify(chdr, cfrag, mac)
-                if not is_mac_ok:
-                    pkt_info = self.firstlayer().summary()
-                    log_runtime.info("TLS: record integrity check failed [%s]", pkt_info)  # noqa: E501
+                    cfrag, mac = extract_mac(mfrag)
+                    verify_mac(hdr, cfrag, mac)
 
         elif cipher_type == 'stream':
             # Decrypt
@@ -497,21 +523,8 @@ class TLS(_GenericTLSSessionInheritance):
                 cfrag = e.args[0]
             else:
                 decryption_success = True
-                mfrag = pfrag
-
-                # Extract MAC
-                tmp_len = self.tls_session.rcs.mac_len
-                if tmp_len != 0:
-                    cfrag, mac = mfrag[:-tmp_len], mfrag[-tmp_len:]
-                else:
-                    cfrag, mac = mfrag, b""
-
-                # Verify integrity
-                chdr = hdr[:3] + struct.pack('!H', len(cfrag))
-                is_mac_ok = self._tls_hmac_verify(chdr, cfrag, mac)
-                if not is_mac_ok:
-                    pkt_info = self.firstlayer().summary()
-                    log_runtime.info("TLS: record integrity check failed [%s]", pkt_info)  # noqa: E501
+                cfrag, mac = extract_mac(pfrag)
+                verify_mac(hdr, cfrag, mac)
 
         elif cipher_type == 'aead':
             # Authenticated encryption
@@ -664,7 +677,8 @@ class TLS(_GenericTLSSessionInheritance):
 
         if cipher_type == 'block':
             # Integrity
-            mfrag = self._tls_hmac_add(hdr, cfrag)
+            if not self.tls_session.encrypt_then_mac:
+                cfrag = self._tls_hmac_add(hdr, cfrag)
 
             # Excerpt below better corresponds to TLS 1.1 IV definition,
             # but the result is the same as with TLS 1.2 anyway.
@@ -674,7 +688,7 @@ class TLS(_GenericTLSSessionInheritance):
             #    mfrag = iv + mfrag
 
             # Add padding
-            pfrag = self._tls_pad(mfrag)
+            pfrag = self._tls_pad(cfrag)
 
             # Encryption
             if self.version >= 0x0302:
@@ -687,6 +701,9 @@ class TLS(_GenericTLSSessionInheritance):
             else:
                 # Implicit IV for SSLv3 and TLS 1.0
                 efrag = self._tls_encrypt(pfrag)
+
+            if self.tls_session.encrypt_then_mac:
+                efrag = self._tls_hmac_add(hdr, efrag)
 
         elif cipher_type == "stream":
             # Integrity
@@ -769,10 +786,12 @@ _tls_alert_description = {
     50: "decode_error", 51: "decrypt_error",
     60: "export_restriction_RESERVED", 70: "protocol_version",
     71: "insufficient_security", 80: "internal_error",
-    90: "user_canceled", 100: "no_renegotiation",
+    86: "inappropriate_fallback", 90: "user_canceled",
+    100: "no_renegotiation", 109: "missing_extension",
     110: "unsupported_extension", 111: "certificate_unobtainable",
     112: "unrecognized_name", 113: "bad_certificate_status_response",
-    114: "bad_certificate_hash_value", 115: "unknown_psk_identity"}
+    114: "bad_certificate_hash_value", 115: "unknown_psk_identity",
+    116: "certificate_required", 120: "no_application_protocol"}
 
 
 class TLSAlert(_GenericTLSSessionInheritance):

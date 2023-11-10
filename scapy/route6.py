@@ -1,8 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Philippe Biondi <phil@secdev.org>
-# This program is published under a GPLv2 license
-
 # Copyright (C) 2005  Guillaume Valadon <guedou@hongo.wide.ad.jp>
 #                     Arnaud Ebalard <arnaud.ebalard@eads.net>
 
@@ -17,6 +16,7 @@ Routing and network interface handling for IPv6.
 from __future__ import absolute_import
 import socket
 from scapy.config import conf
+from scapy.interfaces import resolve_iface, NetworkInterface
 from scapy.utils6 import in6_ptop, in6_cidr2mask, in6_and, \
     in6_islladdr, in6_ismlladdr, in6_isincluded, in6_isgladdr, \
     in6_isaddr6to4, in6_ismaddr, construct_source_candidate_set, \
@@ -24,25 +24,38 @@ from scapy.utils6 import in6_ptop, in6_cidr2mask, in6_and, \
 from scapy.arch import read_routes6, in6_getifaddr
 from scapy.pton_ntop import inet_pton, inet_ntop
 from scapy.error import warning, log_loading
-import scapy.modules.six as six
 from scapy.utils import pretty_list
+
+from scapy.compat import (
+    Any,
+    Dict,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 
 class Route6:
 
     def __init__(self):
+        # type: () -> None
         self.resync()
         self.invalidate_cache()
 
     def invalidate_cache(self):
-        self.cache = {}
+        # type: () -> None
+        self.cache = {}  # type: Dict[str, Tuple[str, str, str]]
 
     def flush(self):
+        # type: () -> None
         self.invalidate_cache()
-        self.ipv6_ifaces = set()
-        self.routes = []
+        self.ipv6_ifaces = set()  # type: Set[Union[str, NetworkInterface]]
+        self.routes = []  # type: List[Tuple[str, int, str, str, List[str], int]]  # noqa: E501
 
     def resync(self):
+        # type: () -> None
         # TODO : At the moment, resync will drop existing Teredo routes
         #        if any. Change that ...
         self.invalidate_cache()
@@ -54,14 +67,15 @@ class Route6:
             log_loading.info("No IPv6 support in kernel")
 
     def __repr__(self):
-        rtlst = []
+        # type: () -> str
+        rtlst = []  # type: List[Tuple[Union[str, List[str]], ...]]
 
         for net, msk, gw, iface, cset, metric in self.routes:
+            if_repr = resolve_iface(iface).description
             rtlst.append(('%s/%i' % (net, msk),
                           gw,
-                          (iface if isinstance(iface, six.string_types)
-                           else iface.description),
-                          ", ".join(cset) if len(cset) > 0 else "",
+                          if_repr,
+                          cset,
                           str(metric)))
 
         return pretty_list(rtlst,
@@ -71,19 +85,25 @@ class Route6:
     # Unlike Scapy's Route.make_route() function, we do not have 'host' and 'net'  # noqa: E501
     # parameters. We only have a 'dst' parameter that accepts 'prefix' and
     # 'prefix/prefixlen' values.
-    def make_route(self, dst, gw=None, dev=None):
+    def make_route(self,
+                   dst,  # type: str
+                   gw=None,  # type: Optional[str]
+                   dev=None,  # type: Optional[str]
+                   ):
+        # type: (...) -> Tuple[str, int, str, str, List[str], int]
         """Internal function : create a route for 'dst' via 'gw'.
         """
-        prefix, plen = (dst.split("/") + ["128"])[:2]
-        plen = int(plen)
+        prefix, plen_b = (dst.split("/") + ["128"])[:2]
+        plen = int(plen_b)
 
         if gw is None:
             gw = "::"
         if dev is None:
-            dev, ifaddr, x = self.route(gw)
+            dev, ifaddr_uniq, x = self.route(gw)
+            ifaddr = [ifaddr_uniq]
         else:
             lifaddr = in6_getifaddr()
-            devaddrs = [x for x in lifaddr if x[2] == dev]
+            devaddrs = (x for x in lifaddr if x[2] == dev)
             ifaddr = construct_source_candidate_set(prefix, plen, devaddrs)
 
         self.ipv6_ifaces.add(dev)
@@ -91,6 +111,7 @@ class Route6:
         return (prefix, plen, gw, dev, ifaddr, 1)
 
     def add(self, *args, **kargs):
+        # type: (*Any, **Any) -> None
         """Ex:
         add(dst="2001:db8:cafe:f000::/56")
         add(dst="2001:db8:cafe:f000::/56", gw="2001:db8:cafe::1")
@@ -100,6 +121,7 @@ class Route6:
         self.routes.append(self.make_route(*args, **kargs))
 
     def remove_ipv6_iface(self, iface):
+        # type: (str) -> None
         """
         Remove the network interface 'iface' from the list of interfaces
         supporting IPv6.
@@ -112,15 +134,16 @@ class Route6:
                 pass
 
     def delt(self, dst, gw=None):
+        # type: (str, Optional[str]) -> None
         """ Ex:
         delt(dst="::/0")
         delt(dst="2001:db8:cafe:f000::/56")
         delt(dst="2001:db8:cafe:f000::/56", gw="2001:db8:deca::1")
         """
         tmp = dst + "/128"
-        dst, plen = tmp.split('/')[:2]
+        dst, plen_b = tmp.split('/')[:2]
         dst = in6_ptop(dst)
-        plen = int(plen)
+        plen = int(plen_b)
         to_del = [x for x in self.routes
                   if in6_ptop(x[0]) == dst and x[1] == plen]
         if gw:
@@ -134,18 +157,19 @@ class Route6:
             i = self.routes.index(to_del[0])
             self.invalidate_cache()
             self.remove_ipv6_iface(self.routes[i][3])
-            del(self.routes[i])
+            del self.routes[i]
 
     def ifchange(self, iff, addr):
-        the_addr, the_plen = (addr.split("/") + ["128"])[:2]
-        the_plen = int(the_plen)
+        # type: (str, str) -> None
+        the_addr, the_plen_b = (addr.split("/") + ["128"])[:2]
+        the_plen = int(the_plen_b)
 
         naddr = inet_pton(socket.AF_INET6, the_addr)
         nmask = in6_cidr2mask(the_plen)
         the_net = inet_ntop(socket.AF_INET6, in6_and(nmask, naddr))
 
         for i, route in enumerate(self.routes):
-            net, plen, gw, iface, addr, metric = route
+            net, plen, gw, iface, _, metric = route
             if iface != iff:
                 continue
 
@@ -156,9 +180,10 @@ class Route6:
             else:
                 self.routes[i] = (net, plen, gw, iface, [the_addr], metric)
         self.invalidate_cache()
-        conf.netcache.in6_neighbor.flush()
+        conf.netcache.in6_neighbor.flush()  # type: ignore
 
     def ifdel(self, iff):
+        # type: (str) -> None
         """ removes all route entries that uses 'iff' interface. """
         new_routes = []
         for rt in self.routes:
@@ -169,6 +194,7 @@ class Route6:
         self.remove_ipv6_iface(iff)
 
     def ifadd(self, iff, addr):
+        # type: (str, str) -> None
         """
         Add an interface 'iff' with provided address into routing table.
 
@@ -181,9 +207,9 @@ class Route6:
             prefix length value can be omitted. In that case, a value of 128
             will be used.
         """
-        addr, plen = (addr.split("/") + ["128"])[:2]
+        addr, plen_b = (addr.split("/") + ["128"])[:2]
         addr = in6_ptop(addr)
-        plen = int(plen)
+        plen = int(plen_b)
         naddr = inet_pton(socket.AF_INET6, addr)
         nmask = in6_cidr2mask(plen)
         prefix = inet_ntop(socket.AF_INET6, in6_and(nmask, naddr))
@@ -191,7 +217,8 @@ class Route6:
         self.routes.append((prefix, plen, '::', iff, [addr], 1))
         self.ipv6_ifaces.add(iff)
 
-    def route(self, dst=None, dev=None, verbose=conf.verb):
+    def route(self, dst="", dev=None, verbose=conf.verb):
+        # type: (str, Optional[Any], int) -> Tuple[str, str, str]
         """
         Provide best route to IPv6 destination address, based on Scapy
         internal routing table content.
@@ -255,11 +282,11 @@ class Route6:
         # Deal with dev-specific request for cache search
         k = dst
         if dev is not None:
-            k = dst + "%%" + (dev if isinstance(dev, six.string_types) else dev.pcap_name)  # noqa: E501
+            k = dst + "%%" + dev
         if k in self.cache:
             return self.cache[k]
 
-        paths = []
+        paths = []  # type: List[Tuple[int, int, Tuple[str, List[str], str]]]
 
         # TODO : review all kinds of addresses (scope and *cast) to see
         #        if we are able to cope with everything possible. I'm convinced
@@ -288,12 +315,12 @@ class Route6:
         best_plen = (paths[0][0], paths[0][1])
         paths = [x for x in paths if (x[0], x[1]) == best_plen]
 
-        res = []
-        for p in paths:  # Here we select best source address for every route
-            tmp = p[2]
-            srcaddr = get_source_addr_from_candidate_set(dst, tmp[1])
+        res = []  # type: List[Tuple[int, int, Tuple[str, str, str]]]
+        for path in paths:  # we select best source address for every route
+            tmp_c = path[2]
+            srcaddr = get_source_addr_from_candidate_set(dst, tmp_c[1])
             if srcaddr is not None:
-                res.append((p[0], p[1], (tmp[0], srcaddr, tmp[2])))
+                res.append((path[0], path[1], (tmp_c[0], srcaddr, tmp_c[2])))
 
         if res == []:
             warning("Found a route for IPv6 destination '%s', but no possible source address.", dst)  # noqa: E501
@@ -309,7 +336,7 @@ class Route6:
         #    first one
 
         if len(res) > 1:
-            tmp = []
+            tmp = []  # type: List[Tuple[int, int, Tuple[str, str, str]]]
             if in6_isgladdr(dst) and in6_isaddr6to4(dst):
                 # TODO : see if taking the longest match between dst and
                 #        every source addresses would provide better results
@@ -324,7 +351,7 @@ class Route6:
         # Fill the cache (including dev-specific request)
         k = dst
         if dev is not None:
-            k = dst + "%%" + (dev if isinstance(dev, six.string_types) else dev.pcap_name)  # noqa: E501
+            k = dst + "%%" + dev
         self.cache[k] = res[0][2]
 
         return res[0][2]

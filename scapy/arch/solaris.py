@@ -1,7 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Philippe Biondi <phil@secdev.org>
-# This program is published under a GPLv2 license
 
 """
 Customization for the Solaris operation system.
@@ -18,12 +18,14 @@ socket.IPPROTO_GRE = 47
 # From sys/sockio.h and net/if.h
 SIOCGIFHWADDR = 0xc02069b9  # Get hardware address
 
-from scapy.arch.pcapdnet import *  # noqa: F401, F403, E402
+from scapy.arch.libpcap import *  # noqa: F401, F403, E402
 from scapy.arch.unix import *  # noqa: F401, F403, E402
-from scapy.arch.common import get_if_raw_hwaddr  # noqa: F401, F403, E402
+
+from scapy.interfaces import NetworkInterface  # noqa: E402
 
 
 def get_working_if():
+    # type: () -> NetworkInterface
     """Return an interface that works"""
     try:
         # return the interface associated with the route with smallest
@@ -32,4 +34,4 @@ def get_working_if():
     except ValueError:
         # no route
         iface = conf.loopback_name
-    return iface
+    return conf.ifaces.dev_from_name(iface)

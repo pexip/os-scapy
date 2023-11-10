@@ -1,7 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Philippe Biondi <phil@secdev.org>
-# This program is published under a GPLv2 license
 
 """
 Generators and packet meta classes.
@@ -16,27 +16,57 @@ from __future__ import absolute_import
 from functools import reduce
 import operator
 import os
-import re
 import random
+import re
 import socket
+import struct
 import subprocess
 import types
+import warnings
 
+import scapy
+from scapy.error import Scapy_Exception
 from scapy.consts import WINDOWS
-from scapy.modules.six.moves import range
+
+from scapy.libs.six.moves import range
+
+from scapy.compat import (
+    Any,
+    Dict,
+    Generic,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+    _Generic_metaclass,
+    cast,
+)
+
+try:
+    import pyx
+except ImportError:
+    pass
+
+_T = TypeVar("_T")
 
 
-class Gen(object):
-    __slots__ = []
+class Gen(Generic[_T]):
+    __slots__ = []  # type: List[str]
 
     def __iter__(self):
+        # type: () -> Iterator[_T]
         return iter([])
 
     def __iterlen__(self):
+        # type: () -> int
         return sum(1 for _ in iter(self))
 
 
 def _get_values(value):
+    # type: (Any) -> Any
     """Generate a range object from (start, stop[, step]) tuples, or
     return value.
 
@@ -50,18 +80,17 @@ def _get_values(value):
     return value
 
 
-class SetGen(Gen):
+class SetGen(Gen[_T]):
     def __init__(self, values, _iterpacket=1):
+        # type: (Any, int) -> None
         self._iterpacket = _iterpacket
         if isinstance(values, (list, BasePacketList)):
             self.values = [_get_values(val) for val in values]
         else:
             self.values = [_get_values(values)]
 
-    def transf(self, element):
-        return element
-
     def __iter__(self):
+        # type: () -> Iterator[Any]
         for i in self.values:
             if (isinstance(i, Gen) and
                 (self._iterpacket or not isinstance(i, BasePacket))) or (
@@ -71,91 +100,144 @@ class SetGen(Gen):
             else:
                 yield i
 
+    def __len__(self):
+        # type: () -> int
+        return self.__iterlen__()
+
     def __repr__(self):
+        # type: () -> str
         return "<SetGen %r>" % self.values
 
 
-class Net(Gen):
-    """Generate a list of IPs from a network address or a name"""
-    name = "ip"
-    ip_regex = re.compile(r"^(\*|[0-2]?[0-9]?[0-9](-[0-2]?[0-9]?[0-9])?)\.(\*|[0-2]?[0-9]?[0-9](-[0-2]?[0-9]?[0-9])?)\.(\*|[0-2]?[0-9]?[0-9](-[0-2]?[0-9]?[0-9])?)\.(\*|[0-2]?[0-9]?[0-9](-[0-2]?[0-9]?[0-9])?)(/[0-3]?[0-9])?$")  # noqa: E501
-
-    @staticmethod
-    def _parse_digit(a, netmask):
-        netmask = min(8, max(netmask, 0))
-        if a == "*":
-            a = (0, 256)
-        elif a.find("-") >= 0:
-            x, y = [int(d) for d in a.split('-')]
-            if x > y:
-                y = x
-            a = (x & (0xff << netmask), max(y, (x | (0xff >> (8 - netmask)))) + 1)  # noqa: E501
-        else:
-            a = (int(a) & (0xff << netmask), (int(a) | (0xff >> (8 - netmask))) + 1)  # noqa: E501
-        return a
+class Net(Gen[str]):
+    """Network object from an IP address or hostname and mask"""
+    name = "Net"  # type: str
+    family = socket.AF_INET  # type: int
+    max_mask = 32  # type: int
 
     @classmethod
-    def _parse_net(cls, net):
-        tmp = net.split('/') + ["32"]
-        if not cls.ip_regex.match(net):
-            tmp[0] = socket.gethostbyname(tmp[0])
-        netmask = int(tmp[1])
-        ret_list = [cls._parse_digit(x, y - netmask) for (x, y) in zip(tmp[0].split('.'), [8, 16, 24, 32])]  # noqa: E501
-        return ret_list, netmask
+    def name2addr(cls, name):
+        # type: (str) -> str
+        try:
+            return next(
+                addr_port[0]
+                for family, _, _, _, addr_port in
+                socket.getaddrinfo(name, None, cls.family)
+                if family == cls.family
+            )
+        except socket.error:
+            if re.search("(^|\\.)[0-9]+-[0-9]+($|\\.)", name) is not None:
+                raise Scapy_Exception("Ranges are no longer accepted in %s()" %
+                                      cls.__name__)
+            raise
 
-    def __init__(self, net):
-        self.repr = net
-        self.parsed, self.netmask = self._parse_net(net)
+    @classmethod
+    def ip2int(cls, addr):
+        # type: (str) -> int
+        return cast(int, struct.unpack(
+            "!I", socket.inet_aton(cls.name2addr(addr))
+        )[0])
+
+    @staticmethod
+    def int2ip(val):
+        # type: (int) -> str
+        return socket.inet_ntoa(struct.pack('!I', val))
+
+    def __init__(self, net, stop=None):
+        # type: (str, Union[None, str]) -> None
+        if "*" in net:
+            raise Scapy_Exception("Wildcards are no longer accepted in %s()" %
+                                  self.__class__.__name__)
+        if stop is None:
+            try:
+                net, mask = net.split("/", 1)
+            except ValueError:
+                self.mask = self.max_mask  # type: Union[None, int]
+            else:
+                self.mask = int(mask)
+            self.net = net  # type: Union[None, str]
+            inv_mask = self.max_mask - self.mask
+            self.start = self.ip2int(net) >> inv_mask << inv_mask
+            self.count = 1 << inv_mask
+            self.stop = self.start + self.count - 1
+        else:
+            self.start = self.ip2int(net)
+            self.stop = self.ip2int(stop)
+            self.count = self.stop - self.start + 1
+            self.net = self.mask = None
 
     def __str__(self):
-        return next(self.__iter__(), None)
+        # type: () -> str
+        return next(iter(self), "")
 
     def __iter__(self):
-        for d in range(*self.parsed[3]):
-            for c in range(*self.parsed[2]):
-                for b in range(*self.parsed[1]):
-                    for a in range(*self.parsed[0]):
-                        yield "%i.%i.%i.%i" % (a, b, c, d)
+        # type: () -> Iterator[str]
+        # Python 2 won't handle huge (> sys.maxint) values in range()
+        for i in range(self.count):
+            yield self.int2ip(self.start + i)
+
+    def __len__(self):
+        # type: () -> int
+        return self.count
 
     def __iterlen__(self):
-        return reduce(operator.mul, ((y - x) for (x, y) in self.parsed), 1)
+        # type: () -> int
+        # for compatibility
+        return len(self)
 
     def choice(self):
-        return ".".join(str(random.randint(v[0], v[1] - 1)) for v in self.parsed)  # noqa: E501
+        # type: () -> str
+        return self.int2ip(random.randint(self.start, self.stop))
 
     def __repr__(self):
-        return "Net(%r)" % self.repr
+        # type: () -> str
+        if self.mask is not None:
+            return '%s("%s/%d")' % (
+                self.__class__.__name__,
+                self.net,
+                self.mask,
+            )
+        return '%s("%s", "%s")' % (
+            self.__class__.__name__,
+            self.int2ip(self.start),
+            self.int2ip(self.stop),
+        )
 
     def __eq__(self, other):
-        if not other:
+        # type: (Any) -> bool
+        if isinstance(other, str):
+            return self == self.__class__(other)
+        if not isinstance(other, Net):
             return False
-        if hasattr(other, "parsed"):
-            p2 = other.parsed
-        else:
-            p2, nm2 = self._parse_net(other)
-        return self.parsed == p2
+        if self.family != other.family:
+            return False
+        return (self.start == other.start) and (self.stop == other.stop)
 
     def __ne__(self, other):
+        # type: (Any) -> bool
         # Python 2.7 compat
         return not self == other
 
-    __hash__ = None
+    def __hash__(self):
+        # type: () -> int
+        return hash(("scapy.Net", self.family, self.start, self.stop))
 
     def __contains__(self, other):
-        if hasattr(other, "parsed"):
-            p2 = other.parsed
-        else:
-            p2, nm2 = self._parse_net(other)
-        return all(a1 <= a2 and b1 >= b2 for (a1, b1), (a2, b2) in zip(self.parsed, p2))  # noqa: E501
+        # type: (Any) -> bool
+        if isinstance(other, int):
+            return self.start <= other <= self.stop
+        if isinstance(other, str):
+            return self.__class__(other) in self
+        if type(other) is not self.__class__:
+            return False
+        return self.start <= other.start <= other.stop <= self.stop
 
-    def __rcontains__(self, other):
-        return self in self.__class__(other)
 
-
-class OID(Gen):
+class OID(Gen[str]):
     name = "OID"
 
     def __init__(self, oid):
+        # type: (str) -> None
         self.oid = oid
         self.cmpt = []
         fmt = []
@@ -168,9 +250,11 @@ class OID(Gen):
         self.fmt = ".".join(fmt)
 
     def __repr__(self):
+        # type: () -> str
         return "OID(%r)" % self.oid
 
     def __iter__(self):
+        # type: () -> Iterator[str]
         ii = [k[0] for k in self.cmpt]
         while True:
             yield self.fmt % tuple(ii)
@@ -186,6 +270,7 @@ class OID(Gen):
                 i += 1
 
     def __iterlen__(self):
+        # type: () -> int
         return reduce(operator.mul, (max(y - x, 0) + 1 for (x, y) in self.cmpt), 1)  # noqa: E501
 
 
@@ -193,31 +278,50 @@ class OID(Gen):
 #  Packet abstract and base classes  #
 ######################################
 
-class Packet_metaclass(type):
-    def __new__(cls, name, bases, dct):
+class Packet_metaclass(_Generic_metaclass):
+    def __new__(cls,
+                name,  # type: str
+                bases,  # type: Tuple[type, ...]
+                dct  # type: Dict[str, Any]
+                ):
+        # type: (...) -> Type['scapy.packet.Packet']
         if "fields_desc" in dct:  # perform resolution of references to other packets  # noqa: E501
-            current_fld = dct["fields_desc"]
-            resolved_fld = []
-            for f in current_fld:
-                if isinstance(f, Packet_metaclass):  # reference to another fields_desc  # noqa: E501
-                    for f2 in f.fields_desc:
-                        resolved_fld.append(f2)
+            current_fld = dct["fields_desc"]  # type: List[Union[scapy.fields.Field[Any, Any], Packet_metaclass]]  # noqa: E501
+            resolved_fld = []  # type: List[scapy.fields.Field[Any, Any]]
+            for fld_or_pkt in current_fld:
+                if isinstance(fld_or_pkt, Packet_metaclass):
+                    # reference to another fields_desc
+                    for pkt_fld in fld_or_pkt.fields_desc:  # type: ignore
+                        resolved_fld.append(pkt_fld)
                 else:
-                    resolved_fld.append(f)
+                    resolved_fld.append(fld_or_pkt)
         else:  # look for a fields_desc in parent classes
-            resolved_fld = None
+            resolved_fld = []
             for b in bases:
                 if hasattr(b, "fields_desc"):
-                    resolved_fld = b.fields_desc
+                    resolved_fld = b.fields_desc  # type: ignore
                     break
 
         if resolved_fld:  # perform default value replacements
-            final_fld = []
+            final_fld = []  # type: List[scapy.fields.Field[Any, Any]]
+            names = []
             for f in resolved_fld:
+                if f.name in names:
+                    war_msg = (
+                        "Packet '%s' has a duplicated '%s' field ! "
+                        "If you are using several ConditionalFields, have "
+                        "a look at MultipleTypeField instead ! This will "
+                        "become a SyntaxError in a future version of "
+                        "Scapy !" % (
+                            name, f.name
+                        )
+                    )
+                    warnings.warn(war_msg, SyntaxWarning)
+                names.append(f.name)
                 if f.name in dct:
                     f = f.copy()
                     f.default = dct[f.name]
-                    del(dct[f.name])
+                    del dct[f.name]
                 final_fld.append(f)
 
             dct["fields_desc"] = final_fld
@@ -228,66 +332,110 @@ class Packet_metaclass(type):
                 dct["_%s" % attr] = dct.pop(attr)
             except KeyError:
                 pass
-        newcls = super(Packet_metaclass, cls).__new__(cls, name, bases, dct)
+        # Build and inject signature
+        try:
+            # Py3 only
+            import inspect
+            dct["__signature__"] = inspect.Signature([
+                inspect.Parameter("_pkt", inspect.Parameter.POSITIONAL_ONLY),
+            ] + [
+                inspect.Parameter(f.name,
+                                  inspect.Parameter.KEYWORD_ONLY,
+                                  default=f.default)
+                for f in dct["fields_desc"]
+            ])
+        except (ImportError, AttributeError, KeyError):
+            pass
+        newcls = cast('Type[scapy.packet.Packet]',
+                      type.__new__(cls, name, bases, dct))
+        # Note: below can't be typed because we use attributes
+        # created dynamically..
         newcls.__all_slots__ = set(
             attr
             for cls in newcls.__mro__ if hasattr(cls, "__slots__")
             for attr in cls.__slots__
         )
 
-        newcls.aliastypes = [newcls] + getattr(newcls, "aliastypes", [])
+        newcls.aliastypes = (
+            [newcls] + getattr(newcls, "aliastypes", [])
+        )
 
         if hasattr(newcls, "register_variant"):
             newcls.register_variant()
-        for f in newcls.fields_desc:
-            if hasattr(f, "register_owner"):
-                f.register_owner(newcls)
+        for _f in newcls.fields_desc:
+            if hasattr(_f, "register_owner"):
+                _f.register_owner(newcls)
         if newcls.__name__[0] != "_":
             from scapy import config
             config.conf.layers.register(newcls)
         return newcls
 
     def __getattr__(self, attr):
-        for k in self.fields_desc:
+        # type: (str) -> scapy.fields.Field[Any, Any]
+        for k in self.fields_desc:  # type: ignore
             if k.name == attr:
-                return k
+                return k  # type: ignore
         raise AttributeError(attr)
 
-    def __call__(cls, *args, **kargs):
+    def __call__(cls,
+                 *args,  # type: Any
+                 **kargs  # type: Any
+                 ):
+        # type: (...) -> 'scapy.packet.Packet'
         if "dispatch_hook" in cls.__dict__:
             try:
-                cls = cls.dispatch_hook(*args, **kargs)
+                cls = cls.dispatch_hook(*args, **kargs)  # type: ignore
             except Exception:
                 from scapy import config
                 if config.conf.debug_dissector:
                     raise
-                cls = config.conf.raw_layer
-        i = cls.__new__(cls, cls.__name__, cls.__bases__, cls.__dict__)
+                cls = config.conf.raw_layer  # type: ignore
+        i = cls.__new__(
+            cls,  # type: ignore
+            cls.__name__,
+            cls.__bases__,
+            cls.__dict__
+        )
         i.__init__(*args, **kargs)
-        return i
+        return i  # type: ignore
 
 
-class Field_metaclass(type):
-    def __new__(cls, name, bases, dct):
+# Note: see compat.py for an explanation
+
+class Field_metaclass(_Generic_metaclass):
+    def __new__(cls,
+                name,  # type: str
+                bases,  # type: Tuple[type, ...]
+                dct  # type: Dict[str, Any]
+                ):
+        # type: (...) -> Type[scapy.fields.Field[Any, Any]]
         dct.setdefault("__slots__", [])
         newcls = super(Field_metaclass, cls).__new__(cls, name, bases, dct)
-        return newcls
+        return newcls  # type: ignore
 
 
-class BasePacket(Gen):
-    __slots__ = []
+PacketList_metaclass = Field_metaclass
+
+
+class BasePacket(Gen['scapy.packet.Packet']):
+    __slots__ = []  # type: List[str]
 
 
 #############################
 #  Packet list base class   #
 #############################
 
-class BasePacketList(object):
-    __slots__ = []
+class BasePacketList(Gen[_T]):
+    __slots__ = []  # type: List[str]
 
 
 class _CanvasDumpExtended(object):
+    def canvas_dump(self, **kwargs):
+        # type: (**Any) -> 'pyx.canvas.canvas'
+        pass
+
     def psdump(self, filename=None, **kargs):
+        # type: (Optional[str], **Any) -> None
         """
         psdump(filename=None, layer_shift=0, rebuild=1)
 
@@ -302,7 +450,7 @@ class _CanvasDumpExtended(object):
         if filename is None:
             fname = get_temp_file(autoext=kargs.get("suffix", ".eps"))
             canvas.writeEPSfile(fname)
-            if WINDOWS and conf.prog.psreader is None:
+            if WINDOWS and not conf.prog.psreader:
                 os.startfile(fname)
             else:
                 with ContextManagerSubprocess(conf.prog.psreader):
@@ -312,6 +460,7 @@ class _CanvasDumpExtended(object):
         print()
 
     def pdfdump(self, filename=None, **kargs):
+        # type: (Optional[str], **Any) -> None
         """
         pdfdump(filename=None, layer_shift=0, rebuild=1)
 
@@ -326,7 +475,7 @@ class _CanvasDumpExtended(object):
         if filename is None:
             fname = get_temp_file(autoext=kargs.get("suffix", ".pdf"))
             canvas.writePDFfile(fname)
-            if WINDOWS and conf.prog.pdfreader is None:
+            if WINDOWS and not conf.prog.pdfreader:
                 os.startfile(fname)
             else:
                 with ContextManagerSubprocess(conf.prog.pdfreader):
@@ -336,6 +485,7 @@ class _CanvasDumpExtended(object):
         print()
 
     def svgdump(self, filename=None, **kargs):
+        # type: (Optional[str], **Any) -> None
         """
         svgdump(filename=None, layer_shift=0, rebuild=1)
 
@@ -350,7 +500,7 @@ class _CanvasDumpExtended(object):
         if filename is None:
             fname = get_temp_file(autoext=kargs.get("suffix", ".svg"))
             canvas.writeSVGfile(fname)
-            if WINDOWS and conf.prog.svgreader is None:
+            if WINDOWS and not conf.prog.svgreader:
                 os.startfile(fname)
             else:
                 with ContextManagerSubprocess(conf.prog.svgreader):

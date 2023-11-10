@@ -1,6 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
-# This program is published under a GPLv2 license
+# See https://scapy.net/ for more information
 
 """
 Commonly used structures shared across Scapy
@@ -21,3 +21,9 @@ class bpf_program(ctypes.Structure):
     """"Structure for BIOCSETF"""
     _fields_ = [('bf_len', ctypes.c_int),
                 ('bf_insns', ctypes.POINTER(bpf_insn))]
+
+
+class sock_fprog(ctypes.Structure):
+    """"Structure for SO_ATTACH_FILTER"""
+    _fields_ = [('len', ctypes.c_ushort),
+                ('filter', ctypes.POINTER(bpf_insn))]
