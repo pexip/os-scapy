@@ -1,9 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Philippe Biondi <phil@secdev.org>
 # Copyright (C) Mike Ryan <mikeryan@lacklustre.net>
 # Copyright (C) Michael Farrell <micolous+git@gmail.com>
-# This program is published under a GPLv2 license
 
 """
 Bluetooth layers, sockets and send/receive functions.
@@ -19,11 +19,30 @@ from ctypes import sizeof
 from scapy.config import conf
 from scapy.data import DLT_BLUETOOTH_HCI_H4, DLT_BLUETOOTH_HCI_H4_WITH_PHDR
 from scapy.packet import bind_layers, Packet
-from scapy.fields import ByteEnumField, ByteField, Field, FieldLenField, \
-    FieldListField, FlagsField, IntField, LEShortEnumField, LEShortField, \
-    LenField, PacketListField, SignedByteField, StrField, StrFixedLenField, \
-    StrLenField, XByteField, BitField, XLELongField, PadField, UUIDField, \
-    XStrLenField, ConditionalField
+from scapy.fields import (
+    BitField,
+    ByteEnumField,
+    ByteField,
+    Field,
+    FieldLenField,
+    FieldListField,
+    FlagsField,
+    IntField,
+    LEShortEnumField,
+    LEShortField,
+    LenField,
+    MultipleTypeField,
+    PacketListField,
+    PadField,
+    SignedByteField,
+    StrField,
+    StrFixedLenField,
+    StrLenField,
+    UUIDField,
+    XByteField,
+    XLELongField,
+    XStrLenField,
+)
 from scapy.supersocket import SuperSocket
 from scapy.sendrecv import sndrcv
 from scapy.data import MTU
@@ -31,7 +50,7 @@ from scapy.consts import WINDOWS
 from scapy.error import warning
 from scapy.utils import lhex, mac2str, str2mac
 from scapy.volatile import RandMAC
-from scapy.modules import six
+from scapy.libs import six
 
 
 ##########
@@ -393,20 +412,16 @@ class ATT_Find_Information_Response(Packet):
     name = "Find Information Response"
     fields_desc = [
         XByteField("format", 1),
-        ConditionalField(
-            PacketListField(
-                "handles", [],
-                ATT_Handle,
-            ),
-            lambda pkt: pkt.format == 1
-        ),
-        ConditionalField(
-            PacketListField(
-                "handles", [],
-                ATT_Handle_UUID128,
-            ),
-            lambda pkt: pkt.format == 2
-        )]
+        MultipleTypeField(
+            [
+                (PacketListField("handles", [], ATT_Handle),
+                    lambda pkt: pkt.format == 1),
+                (PacketListField("handles", [], ATT_Handle_UUID128),
+                    lambda pkt: pkt.format == 2),
+            ],
+            StrFixedLenField("handles", "", length=0)
+        )
+    ]
 
 
 class ATT_Find_By_Type_Value_Request(Packet):

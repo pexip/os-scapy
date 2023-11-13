@@ -1,0 +1,28 @@
+Description: Remove resource-heavy ISOTP test
+  This test was removed upstream due to resource consumption and it was
+  the one failing in 32 bits architectures so we cherry-picked the commit.
+From: gpotter2 <10530980+gpotter2@users.noreply.github.com>
+Bug: https://github.com/secdev/scapy/issues/3847
+Origin: upstream, https://github.com/secdev/scapy/commit/e83735b8a7eb5a780dfc431fd035f9a4c330122f
+Last-Update: 2023-01-31
+
+--- a/test/contrib/isotp_packet.uts
++++ b/test/contrib/isotp_packet.uts
+@@ -406,17 +406,6 @@ except Scapy_Exception:
+ 
+ assert ex
+ 
+-= Fragment exception
+-~ not_pypy
+-
+-ex = False
+-try:
+-    fragments = ISOTP(b"a" * (1 << 32)).fragment()
+-except Scapy_Exception:
+-    ex = True
+-
+-assert ex
+-
+ = Defragment an ISOTP message composed of multiple CAN frames
+ fragments = [
+     CAN(identifier=0x641, data=dhex("41 10 10 61 62 63 64 65")),

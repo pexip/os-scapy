@@ -1,37 +1,39 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# This file is part of Scapy
+# See https://scapy.net/ for more information
+# Copyright (C) 2006 Nicolas Bareil  <nicolas.bareil AT eads DOT net>
+#                    Arnaud Ebalard  <arnaud.ebalard AT eads DOT net>
+#                    EADS/CRC security team
+
 # scapy.contrib.description = Cisco Discovery Protocol (CDP)
 # scapy.contrib.status = loads
 
-#############################################################################
-#                                                                           #
-#  cdp.py --- Cisco Discovery Protocol (CDP) extension for Scapy            #
-#                                                                           #
-#  Copyright (C) 2006    Nicolas Bareil  <nicolas.bareil AT eads DOT net>   #
-#                        Arnaud Ebalard  <arnaud.ebalard AT eads DOT net>   #
-#                        EADS/CRC security team                             #
-#                                                                           #
-#  This file is part of Scapy                                               #
-#  Scapy is free software: you can redistribute it and/or modify it         #
-#  under the terms of the GNU General Public License version 2 as           #
-#  published by the Free Software Foundation; version 2.                    #
-#                                                                           #
-#  This program is distributed in the hope that it will be useful, but      #
-#  WITHOUT ANY WARRANTY; without even the implied warranty of               #
-#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU        #
-#  General Public License for more details.                                 #
-#                                                                           #
-#############################################################################
+"""
+Cisco Discovery Protocol (CDP) extension for Scapy
+"""
 
 from __future__ import absolute_import
 import struct
 
 from scapy.packet import Packet, bind_layers
-from scapy.fields import ByteEnumField, ByteField, FieldLenField, FlagsField, \
-    IP6Field, IPField, PacketListField, ShortField, StrLenField, \
-    X3BytesField, XByteField, XShortEnumField, XShortField
+from scapy.fields import (
+    ByteEnumField,
+    ByteField,
+    FieldLenField,
+    FlagsField,
+    IP6Field,
+    IPField,
+    OUIField,
+    PacketListField,
+    ShortField,
+    StrLenField,
+    XByteField,
+    XShortEnumField,
+    XShortField,
+)
 from scapy.layers.inet import checksum
 from scapy.layers.l2 import SNAP
 from scapy.compat import orb, chb
-from scapy.modules.six.moves import range
 from scapy.config import conf
 
 
@@ -189,7 +191,7 @@ class CDPMsgAddr(CDPMsgGeneric):
     name = "Addresses"
     fields_desc = [XShortEnumField("type", 0x0002, _cdp_tlv_types),
                    ShortField("len", None),
-                   FieldLenField("naddr", None, "addr", "!I"),
+                   FieldLenField("naddr", None, fmt="!I", count_of="addr"),
                    PacketListField("addr", [], _CDPGuessAddrRecord,
                                    length_from=lambda x:x.len - 8)]
 
@@ -261,7 +263,7 @@ class CDPMsgProtoHello(CDPMsgGeneric):
     type = 0x0008
     fields_desc = [XShortEnumField("type", 0x0008, _cdp_tlv_types),
                    ShortField("len", 32),
-                   X3BytesField("oui", 0x00000c),
+                   OUIField("oui", 0x00000c),
                    XShortField("protocol_id", 0x0),
                    # TLV length (len) - 2 (type) - 2 (len) - 3 (OUI) - 2
                    # (Protocol ID)
@@ -291,7 +293,7 @@ class CDPMsgVoIPVLANReply(CDPMsgGeneric):
     name = "VoIP VLAN Reply"
     fields_desc = [XShortEnumField("type", 0x000e, _cdp_tlv_types),
                    ShortField("len", 7),
-                   ByteField("status?", 1),
+                   ByteField("status", 1),
                    ShortField("vlan", 1)]
 
 

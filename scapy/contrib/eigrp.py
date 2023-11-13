@@ -1,16 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # This file is part of Scapy
-# Scapy is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 2 of the License, or
-# any later version.
-#
-# Scapy is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Scapy. If not, see <http://www.gnu.org/licenses/>.
+# See https://scapy.net/ for more information
+# Copyright (C) 2009 Jochen Bartl
 
 # scapy.contrib.description = Enhanced Interior Gateway Routing Protocol (EIGRP)
 # scapy.contrib.status = loads
@@ -20,19 +11,13 @@
     ~~~~~~~~~~~~~~~~~~~~~
 
     :version:   2009-08-13
-    :copyright: 2009 by Jochen Bartl
     :e-mail:    lobo@c3a.de / jochen.bartl@gmail.com
-    :license:   GPL v2
 
     :TODO
 
     - Replace TLV code with a more generic solution
         * http://trac.secdev.org/scapy/ticket/90
     - Write function for calculating authentication data
-
-    :Known bugs:
-
-        -
 
     :Thanks:
 
@@ -47,11 +32,11 @@ import struct
 from scapy.packet import Packet
 from scapy.fields import StrField, IPField, XShortField, FieldLenField, \
     StrLenField, IntField, ByteEnumField, ByteField, ConditionalField, \
-    FlagsField, IP6Field, PacketField, PacketListField, ShortEnumField, \
+    FlagsField, IP6Field, PacketListField, ShortEnumField, \
     ShortField, StrFixedLenField, ThreeBytesField
 from scapy.layers.inet import IP, checksum, bind_layers
 from scapy.layers.inet6 import IPv6
-from scapy.compat import chb, raw
+from scapy.compat import chb
 from scapy.config import conf
 from scapy.utils import inet_aton, inet_ntoa
 from scapy.pton_ntop import inet_ntop, inet_pton
@@ -296,7 +281,7 @@ class ShortVersionField(ShortField):
             if not hasattr(self, "default"):
                 return x
             if self.default is not None:
-                warning("set value to default. Format of %r is invalid" % x)
+                warning("set value to default. Format of %r is invalid", x)
                 return self.default
             else:
                 raise Scapy_Exception("Format of value is invalid")
@@ -449,28 +434,6 @@ _eigrp_tlv_cls = {
 }
 
 
-class RepeatedTlvListField(PacketListField):
-    def __init__(self, name, default, cls):
-        PacketField.__init__(self, name, default, cls)
-
-    def getfield(self, pkt, s):
-        lst = []
-        remain = s
-        while len(remain) > 0:
-            p = self.m2i(pkt, remain)
-            if conf.padding_layer in p:
-                pad = p[conf.padding_layer]
-                remain = pad.load
-                del(pad.underlayer.payload)
-            else:
-                remain = b""
-            lst.append(p)
-        return remain, lst
-
-    def addfield(self, pkt, s, val):
-        return s + b"".join(raw(v) for v in val)
-
-
 def _EIGRPGuessPayloadClass(p, **kargs):
     cls = conf.raw_layer
     if len(p) >= 2:
@@ -504,7 +467,7 @@ class EIGRP(Packet):
                    IntField("seq", 0),
                    IntField("ack", 0),
                    IntField("asn", 100),
-                   RepeatedTlvListField("tlvlist", [], _EIGRPGuessPayloadClass)
+                   PacketListField("tlvlist", [], _EIGRPGuessPayloadClass)
                    ]
 
     def post_build(self, p, pay):

@@ -1,8 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
+# See https://scapy.net/ for more information
 # Copyright (C) 2007, 2008, 2009 Arnaud Ebalard
 #               2015, 2016, 2017 Maxence Tury
 #               2019 Romain Perez
-# This program is published under a GPLv2 license
 
 """
 TLS server automaton. This makes for a primitive TLS stack.
@@ -636,7 +637,7 @@ class TLSServerAutomaton(_TLSAutomaton):
                     # secret
                     self.vprint("Ticket found in database !")
                     if res_ciphersuite not in _tls_cipher_suites_cls:
-                        warning("Unknown cipher suite %d" % res_ciphersuite)
+                        warning("Unknown cipher suite %d", res_ciphersuite)
                         # we do not try to set a default nor stop the execution
                     else:
                         cs_cls = _tls_cipher_suites_cls[res_ciphersuite]
@@ -770,7 +771,6 @@ class TLSServerAutomaton(_TLSAutomaton):
         if self.cur_session.sid is not None:
             self.add_record(is_tls12=True)
             self.add_msg(TLSChangeCipherSpec())
-        pass
 
     @ATMT.condition(tls13_ADDED_SERVERHELLO)
     def tls13_should_add_EncryptedExtensions(self):
@@ -1394,7 +1394,7 @@ class TLSServerAutomaton(_TLSAutomaton):
         self.socket.close()
         raise self.FINAL()
 
-    @ATMT.state(final=True)
+    @ATMT.state(stop=True, final=True)
     def FINAL(self):
         self.vprint("Closing server socket...")
         self.serversocket.close()

@@ -1,10 +1,13 @@
 {
   "testfiles": [
     "test/*.uts",
+    "test/scapy/layers/*.uts",
     "test/contrib/automotive/*.uts",
     "test/contrib/automotive/obd/*.uts",
+    "test/contrib/automotive/scanner/*.uts",
     "test/contrib/automotive/gm/*.uts",
     "test/contrib/automotive/bmw/*.uts",
+    "test/contrib/automotive/xcp/*.uts",
     "test/contrib/*.uts"
   ],
   "remove_testfiles": [
@@ -23,13 +26,14 @@
     "test/sslv2.uts": "load_layer(\"tls\")",
     "test/tls*.uts": "load_layer(\"tls\")"
   },
-  "format": "text",
   "kw_ko": [
     "osx",
     "linux",
     "windows",
     "crypto_advanced",
     "ipv6",
+    "tap",
+    "tun",
     "vcan_socket"
   ]
 }

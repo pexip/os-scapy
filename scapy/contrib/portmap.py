@@ -1,7 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Lucas Preston <lucas.preston@infinite.io>
-# This program is published under a GPLv2 license
 
 # scapy.contrib.description = Portmapper v2
 # scapy.contrib.status = loads
@@ -73,7 +73,7 @@ class DUMP_Reply(Packet):
     name = 'PORTMAP DUMP Reply'
     fields_desc = [
         IntField('value_follows', 0),
-        PacketListField('mappings', [], cls=Map_Entry,
+        PacketListField('mappings', [], Map_Entry,
                         next_cls_cb=lambda pkt, lst, cur, remain:
                         Map_Entry if pkt.value_follows == 1 and
                         (len(lst) == 0 or cur.value_follows == 1) and

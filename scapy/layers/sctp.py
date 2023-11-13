@@ -1,8 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Philippe Biondi <phil@secdev.org>
 # Copyright (C) 6WIND <olivier.matz@6wind.com>
-# This program is published under a GPLv2 license
 
 """
 SCTP (Stream Control Transmission Protocol).
@@ -15,13 +15,29 @@ from scapy.compat import orb, raw
 from scapy.volatile import RandBin
 from scapy.config import conf
 from scapy.packet import Packet, bind_layers
-from scapy.fields import BitField, ByteEnumField, ConditionalField, Field, \
-    FieldLenField, FieldListField, IPField, IntEnumField, IntField, \
-    PacketListField, PadField, ShortEnumField, ShortField, StrLenField, \
-    XByteField, XIntField, XShortField
-from scapy.layers.inet import IP
-from scapy.layers.inet6 import IP6Field
-from scapy.layers.inet6 import IPv6
+from scapy.fields import (
+    BitField,
+    ByteEnumField,
+    Field,
+    FieldLenField,
+    FieldListField,
+    IPField,
+    IntEnumField,
+    IntField,
+    MultipleTypeField,
+    PacketListField,
+    PadField,
+    ShortEnumField,
+    ShortField,
+    StrFixedLenField,
+    StrLenField,
+    XByteField,
+    XIntField,
+    XShortField,
+)
+from scapy.data import SCTP_SERVICES
+from scapy.layers.inet import IP, IPerror
+from scapy.layers.inet6 import IP6Field, IPv6, IPerror6
 
 IPPROTO_SCTP = 132
 
@@ -168,7 +184,7 @@ sctpchunktypes = {
 }
 
 sctpchunkparamtypescls = {
-    1: "SCTPChunkParamHearbeatInfo",
+    1: "SCTPChunkParamHeartbeatInfo",
     5: "SCTPChunkParamIPv4Addr",
     6: "SCTPChunkParamIPv6Addr",
     7: "SCTPChunkParamStateCookie",
@@ -228,9 +244,9 @@ class _SCTPChunkGuessPayload:
 
 
 class SCTP(_SCTPChunkGuessPayload, Packet):
-    fields_desc = [ShortField("sport", None),
-                   ShortField("dport", None),
-                   XIntField("tag", None),
+    fields_desc = [ShortEnumField("sport", 0, SCTP_SERVICES),
+                   ShortEnumField("dport", 0, SCTP_SERVICES),
+                   XIntField("tag", 0),
                    XIntField("chksum", None), ]
 
     def answers(self, other):
@@ -248,6 +264,23 @@ class SCTP(_SCTPChunkGuessPayload, Packet):
             crc = crc32c(raw(p))
             p = p[:8] + struct.pack(">I", crc) + p[12:]
         return p
+
+
+class SCTPerror(SCTP):
+    name = "SCTP in ICMP"
+
+    def answers(self, other):
+        if not isinstance(other, SCTP):
+            return 0
+        if conf.checkIPsrc:
+            if not ((self.sport == other.sport) and
+                    (self.dport == other.dport)):
+                return 0
+        return 1
+
+    def mysummary(self):
+        return Packet.mysummary(self)
+
 
 # SCTP Chunk variable params
 
@@ -271,7 +304,7 @@ class _SCTPChunkParam:
         return b"", s[:]
 
 
-class SCTPChunkParamHearbeatInfo(_SCTPChunkParam, Packet):
+class SCTPChunkParamHeartbeatInfo(_SCTPChunkParam, Packet):
     fields_desc = [ShortEnumField("type", 1, sctpchunkparamtypes),
                    FieldLenField("len", None, length_of="data",
                                  adjust=lambda pkt, x:x + 4),
@@ -396,12 +429,16 @@ class SCTPChunkParamAddIPAddr(_SCTPChunkParam, Packet):
                    ShortEnumField("addr_type", 5, sctpchunkparamtypes),
                    FieldLenField("addr_len", None, length_of="addr",
                                  adjust=lambda pkt, x:x + 4),
-                   ConditionalField(
-        IPField("addr", "127.0.0.1"),
-        lambda p: p.addr_type == 5),
-        ConditionalField(
-        IP6Field("addr", "::1"),
-        lambda p: p.addr_type == 6), ]
+                   MultipleTypeField(
+                       [
+                           (IPField("addr", "127.0.0.1"),
+                            lambda p: p.addr_type == 5),
+                           (IP6Field("addr", "::1"),
+                            lambda p: p.addr_type == 6),
+                       ],
+                       StrFixedLenField("addr", "",
+                                        length_from=lambda pkt: pkt.addr_len))
+                   ]
 
 
 class SCTPChunkParamDelIPAddr(SCTPChunkParamAddIPAddr):
@@ -669,4 +706,6 @@ class SCTPChunkAddressConfAck(SCTPChunkAddressConf):
 
 
 bind_layers(IP, SCTP, proto=IPPROTO_SCTP)
+bind_layers(IPerror, SCTPerror, proto=IPPROTO_SCTP)
 bind_layers(IPv6, SCTP, nh=IPPROTO_SCTP)
+bind_layers(IPerror6, SCTPerror, proto=IPPROTO_SCTP)

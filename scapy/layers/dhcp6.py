@@ -1,8 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Philippe Biondi <phil@secdev.org>
-# This program is published under a GPLv2 license
-
+# Copyright (C) Philippe Biondi <phil@secdev.org>
 # Copyright (C) 2005  Guillaume Valadon <guedou@hongo.wide.ad.jp>
 #                     Arnaud Ebalard <arnaud.ebalard@eads.net>
 
@@ -22,7 +22,7 @@ from scapy.data import EPOCH, ETHER_ANY
 from scapy.compat import raw, orb
 from scapy.error import warning
 from scapy.fields import BitField, ByteEnumField, ByteField, FieldLenField, \
-    FlagsField, IntEnumField, IntField, MACField, PacketField, \
+    FlagsField, IntEnumField, IntField, MACField, \
     PacketListField, ShortEnumField, ShortField, StrField, StrFixedLenField, \
     StrLenField, UTCTimeField, X3BytesField, XIntField, XShortEnumField, \
     PacketLenField, UUIDField, FieldListField
@@ -33,10 +33,9 @@ from scapy.layers.inet6 import DomainNameListField, IP6Field, IP6ListField, \
     IPv6
 from scapy.packet import Packet, bind_bottom_up
 from scapy.pton_ntop import inet_pton
-from scapy.sendrecv import send
 from scapy.themes import Color
 from scapy.utils6 import in6_addrtovendor, in6_islladdr
-import scapy.modules.six as six
+import scapy.libs.six as six
 
 #############################################################################
 # Helpers                                                                  ##
@@ -126,7 +125,9 @@ dhcp6opts = {1: "CLIENTID",
              65: "OPTION_ERP_LOCAL_DOMAIN_NAME",  # RFC6440
              66: "OPTION_RELAY_SUPPLIED_OPTIONS",  # RFC6422
              68: "OPTION_VSS",  # RFC6607
-             79: "OPTION_CLIENT_LINKLAYER_ADDR"}  # RFC6939
+             79: "OPTION_CLIENT_LINKLAYER_ADDR",  # RFC6939
+             112: "OPTION_MUD_URL",  # RFC8520
+             }
 
 dhcp6opts_by_code = {1: "DHCP6OptClientId",
                      2: "DHCP6OptServerId",
@@ -182,6 +183,7 @@ dhcp6opts_by_code = {1: "DHCP6OptClientId",
                      66: "DHCP6OptRelaySuppliedOpt",  # RFC6422
                      68: "DHCP6OptVSS",  # RFC6607
                      79: "DHCP6OptClientLinkLayerAddr",  # RFC6939
+                     112: "DHCP6OptMudUrl",  # RFC8520
                      }
 
 
@@ -343,34 +345,20 @@ class DHCP6OptUnknown(_DHCP6OptGuessPayload):  # A generic DHCPv6 Option
                                length_from=lambda pkt: pkt.optlen)]
 
 
-class _DUIDField(PacketField):
-    __slots__ = ["length_from"]
-
-    def __init__(self, name, default, length_from=None):
-        StrField.__init__(self, name, default)
-        self.length_from = length_from
-
-    def i2m(self, pkt, i):
-        return raw(i)
-
-    def m2i(self, pkt, x):
-        cls = conf.raw_layer
-        if len(x) > 4:
-            o = struct.unpack("!H", x[:2])[0]
-            cls = get_cls(duid_cls.get(o, conf.raw_layer), conf.raw_layer)
-        return cls(x)
-
-    def getfield(self, pkt, s):
-        tmp_len = self.length_from(pkt)
-        return s[tmp_len:], self.m2i(pkt, s[:tmp_len])
+def _duid_dispatcher(x):
+    cls = conf.raw_layer
+    if len(x) > 4:
+        o = struct.unpack("!H", x[:2])[0]
+        cls = get_cls(duid_cls.get(o, conf.raw_layer), conf.raw_layer)
+    return cls(x)
 
 
 class DHCP6OptClientId(_DHCP6OptGuessPayload):     # RFC 8415 sect 21.2
     name = "DHCP6 Client Identifier Option"
     fields_desc = [ShortEnumField("optcode", 1, dhcp6opts),
                    FieldLenField("optlen", None, length_of="duid", fmt="!H"),
-                   _DUIDField("duid", "",
-                              length_from=lambda pkt: pkt.optlen)]
+                   PacketLenField("duid", "", _duid_dispatcher,
+                                  length_from=lambda pkt: pkt.optlen)]
 
 
 class DHCP6OptServerId(DHCP6OptClientId):     # RFC 8415 sect 21.3
@@ -627,7 +615,7 @@ class _UserClassDataField(PacketListField):
             if conf.padding_layer in p:
                 pad = p[conf.padding_layer]
                 remain = pad.load
-                del(pad.underlayer.payload)
+                del pad.underlayer.payload
             else:
                 remain = ""
             lst.append(p)
@@ -789,6 +777,9 @@ class DHCP6OptIAPrefix(_DHCP6OptGuessPayload):  # RFC 8415 sect 21.22
                    PacketListField("iaprefopts", [],
                                    _DHCP6OptGuessPayloadElt,
                                    length_from=lambda pkt: pkt.optlen - 25)]
+
+    def guess_payload_class(self, payload):
+        return conf.padding_layer
 
 
 class DHCP6OptIA_PD(_DHCP6OptGuessPayload):  # RFC 8415 sect 21.21
@@ -1035,6 +1026,16 @@ class DHCP6OptClientLinkLayerAddr(_DHCP6OptGuessPayload):  # RFC6939
                                  adjust=lambda pkt, x: x + 2),
                    ShortField("lltype", 1),  # ethernet
                    _LLAddrField("clladdr", ETHER_ANY)]
+
+
+class DHCP6OptMudUrl(_DHCP6OptGuessPayload):  # RFC8520
+    name = "DHCP6 Option - MUD URL"
+    fields_desc = [ShortEnumField("optcode", 112, dhcp6opts),
+                   FieldLenField("optlen", None, length_of="mudstring"),
+                   StrLenField("mudstring", "",
+                               length_from=lambda pkt: pkt.optlen,
+                               max_length=253,
+                               )]
 
 
 #####################################################################
@@ -1378,7 +1379,6 @@ bind_bottom_up(UDP, _dhcp6_dispatcher, {"dport": 546})
 class DHCPv6_am(AnsweringMachine):
     function_name = "dhcp6d"
     filter = "udp and port 546 and port 547"
-    send_function = staticmethod(send)
 
     def usage(self):
         msg = """

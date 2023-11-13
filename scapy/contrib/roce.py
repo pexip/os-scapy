@@ -1,7 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # This file is part of Scapy
-# See http://www.secdev.org/projects/scapy for more information
+# See https://scapy.net/ for more information
 # Copyright (C) Haggai Eran <haggai.eran@gmail.com>
-# This program is published under a GPLv2 license
 
 # scapy.contrib.description = RoCE v2
 # scapy.contrib.status = loads
@@ -11,13 +11,15 @@ RoCE: RDMA over Converged Ethernet
 """
 
 from scapy.packet import Packet, bind_layers, Raw
-from scapy.fields import ByteEnumField, XShortField, \
-    XLongField, BitField, FCSField
+from scapy.fields import ByteEnumField, ByteField, XByteField, \
+    ShortField, XShortField, XLongField, BitField, XBitField, FCSField
 from scapy.layers.inet import IP, UDP
+from scapy.layers.l2 import Ether
 from scapy.compat import raw
 from scapy.error import warning
 from zlib import crc32
 import struct
+from scapy.compat import Tuple
 
 _transports = {
     'RC': 0x00,
@@ -55,6 +57,7 @@ CNP_OPCODE = 0x81
 
 
 def opcode(transport, op):
+    # type: (str, str) -> Tuple[int, str]
     return (_transports[transport] + _ops[op], '{}_{}'.format(transport, op))
 
 
@@ -144,9 +147,11 @@ class BTH(Packet):
 
     @staticmethod
     def pack_icrc(icrc):
+        # type: (int) -> bytes
         return struct.pack("!I", icrc & 0xffffffff)[::-1]
 
     def compute_icrc(self, p):
+        # type: (bytes) -> bytes
         udp = self.underlayer
         if udp is None or not isinstance(udp, UDP):
             warning("Expecting UDP underlayer to compute checksum. Got %s.",
@@ -181,6 +186,7 @@ class BTH(Packet):
     # pseudo-header. Add the ICRC header if it is missing and calculate its
     # value.
     def post_build(self, p, pay):
+        # type: (bytes, bytes) -> bytes
         p += pay
         if self.icrc is None:
             p = p[:-4] + self.compute_icrc(p)
@@ -196,9 +202,36 @@ class CNPPadding(Packet):
 
 
 def cnp(dqpn):
+    # type: (int) -> BTH
     return BTH(opcode=CNP_OPCODE, becn=1, dqpn=dqpn) / CNPPadding()
+
+
+class GRH(Packet):
+    name = "GRH"
+    fields_desc = [
+        BitField("ipver", 6, 4),
+        BitField("tclass", 0, 8),
+        BitField("flowlabel", 6, 20),
+        ShortField("paylen", 0),
+        ByteField("nexthdr", 0),
+        ByteField("hoplmt", 0),
+        XBitField("sgid", 0, 128),
+        XBitField("dgid", 0, 128),
+    ]
+
+
+class AETH(Packet):
+    name = "AETH"
+    fields_desc = [
+        XByteField("syndrome", 0),
+        XBitField("msn", 0, 24),
+    ]
 
 
 bind_layers(BTH, CNPPadding, opcode=CNP_OPCODE)
 
+bind_layers(Ether, GRH, type=0x8915)
+bind_layers(GRH, BTH)
+bind_layers(BTH, AETH, opcode=opcode('RC', 'ACKNOWLEDGE')[0])
+bind_layers(BTH, AETH, opcode=opcode('RD', 'ACKNOWLEDGE')[0])
 bind_layers(UDP, BTH, dport=4791)

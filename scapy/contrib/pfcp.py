@@ -1,22 +1,11 @@
-#! /usr/bin/env python
-
+# SPDX-License-Identifier: GPL-2.0-or-later
+# This file is part of Scapy
+# See https://scapy.net/ for more information
 # Copyright (C) 2019 Travelping GmbH <info@travelping.com>
 
-# This file is part of Scapy
-# Scapy is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 2 of the License, or
-# any later version.
-#
-# Scapy is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Scapy. If not, see <http://www.gnu.org/licenses/>.
-
-# 3GPP TS 29.244
+"""
+3GPP TS 29.244
+"""
 
 # scapy.contrib.description = 3GPP Packet Forwarding Control Protocol
 # scapy.contrib.status = loads
@@ -1812,7 +1801,7 @@ class IE_UserPlaneIPResourceInformation(IE_Base):
     name = "IE User Plane IP Resource Information"
     ie_type = 116
     fields_desc = IE_Base.fields_desc + [
-        XBitField("spare", 0, 1),
+        XBitField("spare1", 0, 1),
         BitField("ASSOSI", 0, 1),
         BitField("ASSONI", 0, 1),
         BitField("TEIDRI", 0, 3),
@@ -1828,7 +1817,9 @@ class IE_UserPlaneIPResourceInformation(IE_Base):
                            x.length - 1 - (1 if x.TEIDRI != 0 else 0) -
                            (x.V4 * 4) - (x.V6 * 16) - x.ASSOSI),
             lambda x: x.ASSONI == 1),
-        ConditionalField(XBitField("spare", None, 4), lambda x: x.ASSOSI == 1),
+        ConditionalField(
+            XBitField("spare2", None, 4),
+            lambda x: x.ASSOSI == 1),
         ConditionalField(
             BitEnumField("interface", "Access", 4, SourceInterface),
             lambda x: x.ASSOSI == 1),

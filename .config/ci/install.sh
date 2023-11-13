@@ -1,11 +1,25 @@
 #!/bin/bash
-# Install on osx
-if [ "$OSTYPE" = "darwin"* ] || [ "$TRAVIS_OS_NAME" = "osx" ]
+
+# Usage:
+# ./install.sh [install mode]
+
+# Detect install mode
+if [[ "${1}" == "libpcap" ]]
 then
-  if [ ! -z $SCAPY_USE_PCAPDNET ]
+    SCAPY_USE_LIBPCAP="yes"
+    if [[ ! -z "$GITHUB_ACTIONS" ]]
+    then
+      echo "SCAPY_USE_LIBPCAP=yes" >> $GITHUB_ENV
+    fi
+fi
+
+# Install on osx
+if [ "${OSTYPE:0:6}" = "darwin" ] || [ "$TRAVIS_OS_NAME" = "osx" ]
+then
+  if [ ! -z $SCAPY_USE_LIBPCAP ]
   then
     brew update
-    brew install libdnet libpcap
+    brew install libpcap
   fi
 fi
 
@@ -14,13 +28,13 @@ if [ "$OSTYPE" = "linux-gnu" ] || [ "$TRAVIS_OS_NAME" = "linux" ]
 then
   sudo apt-get update
   sudo apt-get -qy install tshark net-tools || exit 1
-  sudo apt-get -qy install can-utils build-essential linux-headers-$(uname -r) linux-modules-extra-$(uname -r) || exit 1
-fi
+  sudo apt-get -qy install can-utils || exit 1
 
-# Make sure libpcap is installed
-if [ ! -z $SCAPY_USE_PCAPDNET ]
-then
-  sudo apt-get -qy install libpcap-dev  || exit 1
+  # Make sure libpcap is installed
+  if [ ! -z $SCAPY_USE_LIBPCAP ]
+  then
+    sudo apt-get -qy install libpcap-dev  || exit 1
+  fi
 fi
 
 # On Travis, "osx" dependencies are installed in .travis.yml

@@ -1,16 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # This file is part of Scapy
-# Scapy is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 2 of the License, or
-# any later version.
-#
-# Scapy is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with Scapy. If not, see <http://www.gnu.org/licenses/>.
+# See https://scapy.net/ for more information
 
 # scapy.contrib.description = ICMP Extensions
 # scapy.contrib.status = loads
@@ -19,6 +9,7 @@ from __future__ import absolute_import
 import struct
 
 import scapy
+from scapy.compat import chb
 from scapy.packet import Packet, bind_layers
 from scapy.fields import BitField, ByteField, ConditionalField, \
     FieldLenField, IPField, IntField, PacketListField, ShortField, \
@@ -27,7 +18,7 @@ from scapy.layers.inet import IP, ICMP, checksum
 from scapy.layers.inet6 import IP6Field
 from scapy.error import warning
 from scapy.contrib.mpls import MPLS
-import scapy.modules.six as six
+import scapy.libs.six as six
 from scapy.config import conf
 
 
@@ -55,7 +46,7 @@ class ICMPExtensionHeader(Packet):
     def post_build(self, p, pay):
         if self.chksum is None:
             ck = checksum(p)
-            p = p[:2] + chr(ck >> 8) + chr(ck & 0xff) + p[4:]
+            p = p[:2] + chb(ck >> 8) + chb(ck & 0xff) + p[4:]
         return p + pay
 
     def guess_payload_class(self, payload):
@@ -161,7 +152,7 @@ class ICMPExtensionInterfaceInformation(ICMPExtensionObject):
         IntField('mtu', None),
         lambda pkt: pkt.has_mtu == 1)]
 
-    def self_build(self, field_pos_list=None):
+    def self_build(self, **kwargs):
         if self.afi is None:
             if self.ip4 is not None:
                 self.afi = 1
@@ -179,7 +170,7 @@ class ICMPExtensionInterfaceInformation(ICMPExtensionObject):
         if self.has_mtu and self.mtu is None:
             warning('has_mtu set but mtu is not set.')
 
-        return ICMPExtensionObject.self_build(self, field_pos_list=field_pos_list)  # noqa: E501
+        return ICMPExtensionObject.self_build(self, **kwargs)
 
 
 # Add the post_dissection() method to the existing ICMPv4 and
